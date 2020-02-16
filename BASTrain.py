@@ -9,7 +9,7 @@ from torchvision import transforms
 from alisuretool.Tools import Tools
 from torch.autograd import Variable
 from torch.utils.data import DataLoader
-from BASData import RescaleT, RandomCrop, ToTensorLab, SalObjDataset
+from BASData import RescaleT, RandomCrop, ToTensor, SalObjDataset
 
 
 class IOU(torch.nn.Module):
@@ -39,7 +39,7 @@ class BASRunner(object):
 
     def __init__(self, epoch_num=100000, batch_size_train=2, batch_size_val=1,
                  data_dir='D:\\data\\SOD\\DUTS\\DUTS-TR', tra_image_dir='DUTS-TR-Image',
-                 tra_label_dir='DUTS-TR-Mask', model_dir="./saved_models/basnet_bsi2/"):
+                 tra_label_dir='DUTS-TR-Mask', model_dir=".\\saved_models\\basnet_bsi2"):
         self.epoch_num = epoch_num
         self.batch_size_train = batch_size_train
         self.batch_size_val = batch_size_val
@@ -52,11 +52,11 @@ class BASRunner(object):
         self.tra_img_name_list, self.tra_lbl_name_list = self.get_tra_img_label_name()
         self.salobj_dataset = SalObjDataset(
             img_name_list=self.tra_img_name_list, lbl_name_list=self.tra_lbl_name_list,
-            transform=transforms.Compose([RescaleT(256), RandomCrop(224), ToTensorLab(flag=0)]))
+            transform=transforms.Compose([RescaleT(256), RandomCrop(224), ToTensor()]))
         self.salobj_dataloader = DataLoader(self.salobj_dataset, self.batch_size_train, shuffle=True, num_workers=1)
 
         # Model
-        self.net = BASNet(3, 1, pretrained=False)
+        self.net = BASNet(3, pretrained=False)
         if torch.cuda.is_available():
             self.net.cuda()
             pass
@@ -99,7 +99,7 @@ class BASRunner(object):
             loss0.item(), loss1.item(), loss2.item(), loss3.item(), loss4.item(), loss5.item(), loss6.item()))
         return loss0, loss
 
-    def train(self, save_ite_num=500):
+    def train(self, save_ite_num=200):
         ite_num = 0
         ite_num4val = 0
         running_loss = 0.0
@@ -134,9 +134,10 @@ class BASRunner(object):
                     ite_num, running_loss / ite_num4val, running_tar_loss / ite_num4val))
 
                 if ite_num % save_ite_num == 0:
-                    save_file_name = self.model_dir + "basnet_bsi_itr_{}_train_{:.3f}_tar_{:.3f}.pth".format(
-                        ite_num, running_loss / ite_num4val, running_tar_loss / ite_num4val)
-                    torch.save(self.net.state_dict(), Tools.new_dir(save_file_name))
+                    save_file_name = Tools.new_dir(os.path.join(
+                        self.model_dir, "basnet_bsi_itr_{}_train_{:.3f}_tar_{:.3f}.pth".format(
+                            ite_num, running_loss / ite_num4val, running_tar_loss / ite_num4val)))
+                    torch.save(self.net.state_dict(), save_file_name)
 
                     running_loss = 0.0
                     running_tar_loss = 0.0

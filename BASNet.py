@@ -144,7 +144,7 @@ class RefUnet(nn.Module):
 
 class BASNet(nn.Module):
 
-    def __init__(self, n_channels, n_classes, pretrained=False):
+    def __init__(self, n_channels, pretrained=False):
         super(BASNet, self).__init__()
 
         resnet = models.resnet34(pretrained=pretrained)
@@ -380,7 +380,7 @@ class BASNet(nn.Module):
         d1 = self.outconv1(hd1)  # 256
 
         # -------------Refine Module-------------
-        dout = self.refunet(d1)  # 256
+        dout = self.refunet(d1)
 
         return (F.sigmoid(dout), F.sigmoid(d1), F.sigmoid(d2), F.sigmoid(d3),
                 F.sigmoid(d4), F.sigmoid(d5), F.sigmoid(d6), F.sigmoid(db))
