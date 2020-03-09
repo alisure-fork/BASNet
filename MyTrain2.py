@@ -272,12 +272,10 @@ class BASNet(nn.Module):
 
 class BASRunner(object):
 
-    def __init__(self, epoch_num=100000, batch_size_train=8, batch_size_val=1,
-                 data_dir='D:\\data\\SOD\\DUTS\\DUTS-TR', tra_image_dir='DUTS-TR-Image',
-                 tra_label_dir='DUTS-TR-Mask', model_dir=".\\saved_models\\basnet_bce_simple"):
+    def __init__(self, epoch_num=100000, batch_size_train=8, data_dir='/mnt/4T/Data/SOD/DUTS/DUTS-TR',
+                 tra_image_dir='DUTS-TR-Image', tra_label_dir='DUTS-TR-Mask', model_dir="./saved_models/my_train_2"):
         self.epoch_num = epoch_num
         self.batch_size_train = batch_size_train
-        self.batch_size_val = batch_size_val
 
         # Dataset
         self.data_dir = data_dir
@@ -297,7 +295,7 @@ class BASRunner(object):
             pass
 
         # Loss and Optim
-        self.bce_loss = nn.BCELoss(size_average=True)
+        self.bce_loss = nn.BCELoss()
         self.optimizer = optim.Adam(self.net.parameters(), lr=0.001, betas=(0.9, 0.999), eps=1e-08, weight_decay=0)
         pass
 
@@ -318,7 +316,7 @@ class BASRunner(object):
         Tools.print("restore from {}".format(model_file_name))
         pass
 
-    def train(self, save_ite_num=300):
+    def train(self, save_ite_num=5000, print_ite_num=100):
         ite_num = 0
         ite_num4val = 0
         running_loss = 0.0
@@ -326,6 +324,7 @@ class BASRunner(object):
 
         for epoch in range(0, self.epoch_num):
             for i, data in enumerate(self.salobj_dataloader):
+                is_print = ite_num % print_ite_num == 0
                 ite_num = ite_num + 1
                 ite_num4val = ite_num4val + 1
 
@@ -335,15 +334,17 @@ class BASRunner(object):
                 inputs, labels = Variable(inputs, requires_grad=False), Variable(labels, requires_grad=False)
 
                 self.optimizer.zero_grad()
-                so_up = self.net(inputs)
+                so_up, _ = self.net(inputs)
                 loss = self.all_bce_loss_fusion(so_up, labels)
                 loss.backward()
                 self.optimizer.step()
 
                 running_loss += loss.item()
-                Tools.print("[Epoch:{:5d}/{:5d},batch:{:5d}/{:5d},ite:{}] avg loss:{:.3f} loss:{:.3f}".format(
-                    epoch + 1, self.epoch_num, (i + 1) * self.batch_size_train, len(self.tra_img_name_list),
-                    ite_num, running_loss / ite_num4val, loss.item()))
+                if is_print:
+                    Tools.print("[Epoch:{:5d}/{:5d},batch:{:5d}/{:5d},ite:{}] avg loss:{:.3f} loss:{:.3f}".format(
+                        epoch + 1, self.epoch_num, (i + 1) * self.batch_size_train, len(self.tra_img_name_list),
+                        ite_num, running_loss / ite_num4val, loss.item()))
+                    pass
 
                 if ite_num % save_ite_num == 0:
                     save_file_name = Tools.new_dir(os.path.join(
@@ -369,7 +370,9 @@ class BASRunner(object):
 
 
 if __name__ == '__main__':
-    bas_runner = BASRunner(batch_size_train=2)
-    bas_runner.load_model('./saved_models/basnet_bce_simple/basnet_2100_train_0.310.pth')
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+
+    bas_runner = BASRunner(batch_size_train=16)
+    # bas_runner.load_model('./saved_models/basnet_bce_simple/basnet_2100_train_0.310.pth')
     bas_runner.train()
     pass

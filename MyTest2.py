@@ -31,9 +31,9 @@ def save_output(image_name, predict, d_dir):
 if __name__ == '__main__':
 
     # --------- 1. get image path and name ---------
-    model_dir = './saved_models/basnet_bce_simple/basnet_5400_train_0.219.pth'
+    model_dir = './saved_models/my_train_2/basnet_50000_train_0.033.pth'
     image_dir = './test_data/test_images/'
-    prediction_dir = Tools.new_dir('./test_data/test_results_basnet_bce_simple_5400/')
+    prediction_dir = Tools.new_dir('./test_data/test_results_my_train_2_50000')
     img_name_list = glob.glob(image_dir + '*.jpg')
 
     # --------- 2. dataloader ---------

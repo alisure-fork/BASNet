@@ -37,12 +37,11 @@ class IOU(torch.nn.Module):
 
 class BASRunner(object):
 
-    def __init__(self, epoch_num=100000, batch_size_train=2, batch_size_val=1,
-                 data_dir='D:\\data\\SOD\\DUTS\\DUTS-TR', tra_image_dir='DUTS-TR-Image',
-                 tra_label_dir='DUTS-TR-Mask', model_dir=".\\saved_models\\basnet_bsi2"):
+    def __init__(self, epoch_num=100000, batch_size_train=4,
+                 data_dir='/mnt/4T/Data/SOD/DUTS/DUTS-TR', tra_image_dir='DUTS-TR-Image',
+                 tra_label_dir='DUTS-TR-Mask', model_dir="./saved_models/basnet_bsi1"):
         self.epoch_num = epoch_num
         self.batch_size_train = batch_size_train
-        self.batch_size_val = batch_size_val
 
         # Dataset
         self.data_dir = data_dir
@@ -53,7 +52,7 @@ class BASRunner(object):
         self.salobj_dataset = SalObjDataset(
             img_name_list=self.tra_img_name_list, lbl_name_list=self.tra_lbl_name_list,
             transform=transforms.Compose([RescaleT(256), RandomCrop(224), ToTensor()]))
-        self.salobj_dataloader = DataLoader(self.salobj_dataset, self.batch_size_train, shuffle=True, num_workers=1)
+        self.salobj_dataloader = DataLoader(self.salobj_dataset, self.batch_size_train, shuffle=True, num_workers=4)
 
         # Model
         self.net = BASNet(3, pretrained=False)
@@ -68,6 +67,11 @@ class BASRunner(object):
 
         # Optimizer
         self.optimizer = optim.Adam(self.net.parameters(), lr=0.001, betas=(0.9, 0.999), eps=1e-08, weight_decay=0)
+        pass
+
+    def load_model(self, model_dir):
+        self.net.load_state_dict(torch.load(model_dir))
+        Tools.print("restore from {}".format(model_dir))
         pass
 
     def get_tra_img_label_name(self):
@@ -85,7 +89,7 @@ class BASRunner(object):
         loss = bce_out + ssim_out + iou_out
         return loss
 
-    def muti_bce_loss_fusion(self, d0, d1, d2, d3, d4, d5, d6, d7, labels_v):
+    def muti_bce_loss_fusion(self, d0, d1, d2, d3, d4, d5, d6, d7, labels_v, is_print=False):
         loss0 = self.bce_ssim_loss(d0, labels_v)
         loss1 = self.bce_ssim_loss(d1, labels_v)
         loss2 = self.bce_ssim_loss(d2, labels_v)
@@ -95,11 +99,13 @@ class BASRunner(object):
         loss6 = self.bce_ssim_loss(d6, labels_v)
         loss7 = self.bce_ssim_loss(d7, labels_v)
         loss = loss0 + loss1 + loss2 + loss3 + loss4 + loss5 + loss6 + loss7  # + 5.0*lossa
-        Tools.print("L0:{:.3f}, L1:{:.3f}, L2:{:.3f}, L3:{:.3f}, L4:{:.3f}, L5:{:.3f}, L6:{:.3f}".format(
-            loss0.item(), loss1.item(), loss2.item(), loss3.item(), loss4.item(), loss5.item(), loss6.item()))
+        if is_print:
+            Tools.print("L0:{:.3f}, L1:{:.3f}, L2:{:.3f}, L3:{:.3f}, L4:{:.3f}, L5:{:.3f}, L6:{:.3f}".format(
+                loss0.item(), loss1.item(), loss2.item(), loss3.item(), loss4.item(), loss5.item(), loss6.item()))
+            pass
         return loss0, loss
 
-    def train(self, save_ite_num=200):
+    def train(self, save_ite_num=5000, print_ite_num=100):
         ite_num = 0
         ite_num4val = 0
         running_loss = 0.0
@@ -108,6 +114,7 @@ class BASRunner(object):
 
         for epoch in range(0, self.epoch_num):
             for i, data in enumerate(self.salobj_dataloader):
+                is_print = ite_num % print_ite_num == 0
                 ite_num = ite_num + 1
                 ite_num4val = ite_num4val + 1
 
@@ -121,7 +128,7 @@ class BASRunner(object):
 
                 # forward + backward + optimize
                 d0, d1, d2, d3, d4, d5, d6, d7 = self.net(inputs)
-                loss0, loss = self.muti_bce_loss_fusion(d0, d1, d2, d3, d4, d5, d6, d7, labels)
+                loss0, loss = self.muti_bce_loss_fusion(d0, d1, d2, d3, d4, d5, d6, d7, labels, is_print)
                 loss.backward()
                 self.optimizer.step()
 
@@ -129,9 +136,11 @@ class BASRunner(object):
                 running_loss += loss.item()
                 running_tar_loss += loss0.item()
 
-                Tools.print("[Epoch:{:5d}/{:5d},batch:{:5d}/{:5d},ite:{}] train loss: {:.3f}, tar: {:.3f}".format(
-                    epoch + 1, self.epoch_num, (i + 1) * self.batch_size_train, len(self.tra_img_name_list),
-                    ite_num, running_loss / ite_num4val, running_tar_loss / ite_num4val))
+                if is_print:
+                    Tools.print("[Epoch:{:5d}/{:5d},batch:{:5d}/{:5d},ite:{}] train loss: {:.3f}, tar: {:.3f}".format(
+                        epoch + 1, self.epoch_num, (i + 1) * self.batch_size_train, len(self.tra_img_name_list),
+                        ite_num, running_loss / ite_num4val, running_tar_loss / ite_num4val))
+                    pass
 
                 if ite_num % save_ite_num == 0:
                     save_file_name = Tools.new_dir(os.path.join(
@@ -142,6 +151,9 @@ class BASRunner(object):
                     running_loss = 0.0
                     running_tar_loss = 0.0
                     ite_num4val = 0
+                    Tools.print()
+                    Tools.print("Save Model to {}".format(save_file_name))
+                    Tools.print()
                     pass
 
                 pass
@@ -153,6 +165,10 @@ class BASRunner(object):
 
 
 if __name__ == '__main__':
+
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+
     bas_runner = BASRunner()
+    bas_runner.load_model('./saved_models/basnet_bsi2/basnet_bsi_itr_50000_train_3.627_tar_0.350.pth')
     bas_runner.train()
     pass

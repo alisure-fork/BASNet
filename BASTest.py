@@ -33,9 +33,9 @@ if __name__ == '__main__':
 
     # --------- 1. get image path and name ---------
     # model_dir = './saved_models/basnet_bsi/basnet.pth'
-    model_dir = './saved_models/basnet_bsi2/basnet_bsi_itr_3000_train_11.604_tar_1.413.pth'
+    model_dir = './saved_models/basnet_bsi1/basnet_bsi_itr_155000_train_1.566_tar_0.104.pth'
     image_dir = './test_data/test_images/'
-    prediction_dir = Tools.new_dir('./test_data/test_results3/')
+    prediction_dir = Tools.new_dir('./test_data/test_results2/')
     img_name_list = glob.glob(image_dir + '*.jpg')
 
     # --------- 2. dataloader ---------
@@ -45,7 +45,7 @@ if __name__ == '__main__':
 
     # --------- 3. model define ---------
     Tools.print("...load BASNet...")
-    net = BASNet(3, 1, pretrained=False)
+    net = BASNet(3, pretrained=False)
     net.load_state_dict(torch.load(model_dir))
     if torch.cuda.is_available():
         net.cuda()
