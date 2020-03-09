@@ -24,10 +24,11 @@ class RescaleT(object):
         self.output_size = output_size
         pass
 
-    def __call__(self, image, label):
+    def __call__(self, sample):
+        image, label = sample['image'], sample['label']
         img = transform.resize(image, (self.output_size, self.output_size), mode='constant')
         lbl = transform.resize(label, (self.output_size, self.output_size), 0, mode='constant', preserve_range=True)
-        return img, lbl
+        return {'image': img, 'label': lbl}
 
     pass
 
@@ -37,7 +38,9 @@ class RandomCrop(object):
         self.output_size = output_size
         pass
 
-    def __call__(self, image, label):
+    def __call__(self, sample):
+        image, label = sample['image'], sample['label']
+
         h, w = image.shape[:2]
         new_h, new_w = self.output_size, self.output_size
 
@@ -46,14 +49,17 @@ class RandomCrop(object):
 
         image = image[top: top + new_h, left: left + new_w]
         label = label[top: top + new_h, left: left + new_w]
-        return image, label
+        return {'image': image, 'label': label}
 
     pass
 
 
 class ToTensor(object):
+    """Convert ndarrays in sample to Tensors."""
 
-    def __call__(self, image, label):
+    def __call__(self, sample):
+        image, label = sample['image'], sample['label']
+
         tmpImg = np.zeros((image.shape[0], image.shape[1], 3))
         tmpLbl = np.zeros(label.shape)
 
@@ -74,12 +80,13 @@ class ToTensor(object):
         tmpImg = tmpImg.transpose((2, 0, 1))
         tmpLbl = label.transpose((2, 0, 1))
 
-        return torch.from_numpy(tmpImg), torch.from_numpy(tmpLbl)
+        return {'image': torch.from_numpy(tmpImg),  'label': torch.from_numpy(tmpLbl)}
 
     pass
 
 
 class DatasetUSOD(Dataset):
+
     def __init__(self, img_name_list, lbl_name_list=None, transform=None):
         self.image_name_list = img_name_list
         self.label_name_list = lbl_name_list
@@ -108,7 +115,10 @@ class DatasetUSOD(Dataset):
             pass
 
         if self.transform:
-            image, label = self.transform(image, label)
+            sample = {'image': image, 'label': label}
+            sample = self.transform(sample)
+            image, label = sample['image'], sample['label']
+            pass
 
         return image, label, idx
 
@@ -225,7 +235,7 @@ class BASNet(nn.Module):
         smc = feature_for_smc * mask_b  # 512 * 28 * 28
         smc_logits = F.adaptive_avg_pool2d(smc, 1).view((smc.size()[0], -1))  # 512
 
-        smc_l2norm = self.l2norm(smc_logits)
+        smc_l2norm = self.mic_l2norm(smc_logits)
         smc_sigmoid = torch.sigmoid(smc_logits)
         return smc_logits, smc_l2norm, smc_sigmoid
 
@@ -236,21 +246,37 @@ class BASNet(nn.Module):
             1, keepdim=True) for i in range(feature_for_cam.size()[0])])
         return cam
 
-    def salient_map_divide(self, cam):
-        for_cam_norm = self.feature_norm(cam)  # 1 * 28 * 28
+    def salient_map_divide(self, cam, obj_th=0.7, bg_th=0.05):
+        for_cam_norm = self._feature_norm(cam)  # 1 * 28 * 28
         for_cam_norm_up = self.upscore4(for_cam_norm)  # 1 * 224 * 224
-        for_cam_norm_up[for_cam_norm_up > 0.6] = 2
-        for_cam_norm_up[for_cam_norm_up < 0.05] = 1
-        for_cam_norm_up[for_cam_norm_up < 1] = 0
-        return for_cam_norm_up
+
+        mask = torch.zeros((for_cam_norm_up.size()[0], 1, 224, 224)).fill_(255).cuda()
+        mask = self._mark_obj(mask, for_cam_norm_up, 1.0, threshold=obj_th)
+        mask_pos = for_cam_norm_up < bg_th
+        mask[mask_pos] = 0.0
+        return mask
 
     @staticmethod
-    def feature_norm(feature_map):
+    def _feature_norm(feature_map):
         feature_shape = feature_map.size()
         batch_min, _ = torch.min(feature_map.view((feature_shape[0], -1)), dim=-1, keepdim=True)
         batch_max, _ = torch.max(feature_map.view((feature_shape[0], -1)), dim=-1, keepdim=True)
         norm = torch.div(feature_map.view((feature_shape[0], -1)) - batch_min, batch_max - batch_min)
         return norm.view(feature_shape)
+
+    @staticmethod
+    def _mark_obj(mask, heat_map, label=1.0, threshold=0.7):
+        for i in range(heat_map.size()[0]):
+            mask_pos = heat_map[i] > threshold
+            if torch.sum(mask_pos.float()).cpu().numpy() < 30:
+                threshold = torch.max(heat_map[i]) * 0.7
+                mask_pos = heat_map[i] > threshold
+                pass
+            label_i = mask[i]
+            label_i[mask_pos.data] = label
+            mask[i] = label_i
+            pass
+        return mask
 
     pass
 
@@ -323,7 +349,7 @@ class BASRunner(object):
 
     def __init__(self, epoch_num=100000, batch_size_train=8, clustering_out_dim=512,
                  data_dir='/mnt/4T/Data/SOD/DUTS/DUTS-TR', tra_image_dir='DUTS-TR-Image',
-                 tra_label_dir='DUTS-TR-Mask', model_dir="./saved_models/my_train_2"):
+                 tra_label_dir='DUTS-TR-Mask', model_dir="./saved_models/my_train_mic_1"):
         self.epoch_num = epoch_num
         self.batch_size_train = batch_size_train
 
@@ -341,7 +367,7 @@ class BASRunner(object):
         self.net = BASNet(3, pretrained=True).cuda()
 
         # MIC
-        self.produce_class = MICProduceClass(n_sample=len(self.dataloader_usod), out_dim=clustering_out_dim, ratio=3)
+        self.produce_class = MICProduceClass(n_sample=len(self.dataset_usod), out_dim=clustering_out_dim, ratio=3)
 
         # Loss and Optim
         self.bce_loss = nn.BCELoss().cuda()
@@ -363,8 +389,11 @@ class BASRunner(object):
         return tra_img_name_list, tra_lbl_name_list
 
     def all_loss_fusion(self, bce_out, bce_label, mic_out, mic_label):
-        loss_bce = self.bce_loss(bce_out, bce_label)
+        positions = bce_label.view(-1, 1) < 255.0
+        loss_bce = self.bce_loss(bce_out.view(-1, 1)[positions], bce_label.view(-1, 1)[positions])
+
         loss_mic = self.mic_loss(mic_out, mic_label)
+
         loss_all = loss_bce + loss_mic
         return loss_all, loss_bce, loss_mic
 
@@ -381,7 +410,8 @@ class BASRunner(object):
 
                 self.produce_class.reset()
                 for batch_idx, (inputs, labels, indexes) in enumerate(self.dataloader_usod):
-                    inputs, labels, indexes = inputs.cuda(), labels.cuda(), indexes.cuda()
+                    inputs = inputs.type(torch.FloatTensor).cuda()
+                    labels, indexes = labels.type(torch.FloatTensor).cuda(), indexes.cuda()
                     so_up_out, sme_out, smc_logits_out, smc_l2norm_out = self.net(inputs)
                     self.produce_class.cal_label(smc_l2norm_out, indexes)
                     pass
@@ -394,7 +424,8 @@ class BASRunner(object):
             all_loss, all_loss_bce, all_loss_mic = 0.0, 0.0, 0.0
             self.net.train()
             for i, (inputs, labels, indexes) in enumerate(self.dataloader_usod):
-                inputs, labels, indexes = inputs.cuda(), labels.cuda(), indexes.cuda()
+                inputs = inputs.type(torch.FloatTensor).cuda()
+                labels, indexes = labels.type(torch.FloatTensor).cuda(), indexes.cuda()
                 self.optimizer.zero_grad()
 
                 so_up_out, sme_out, smc_logits_out, smc_l2norm_out = self.net(inputs)
@@ -440,9 +471,10 @@ class BASRunner(object):
 
 
 if __name__ == '__main__':
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
-    bas_runner = BASRunner(batch_size_train=2, data_dir='D:\\data\\SOD\\DUTS\\DUTS-TR')
+    # bas_runner = BASRunner(batch_size_train=2, data_dir='D:\\data\\SOD\\DUTS\\DUTS-TR')
+    bas_runner = BASRunner()
     # bas_runner.load_model('./saved_models/basnet_bce_simple/basnet_2100_train_0.310.pth')
     bas_runner.train()
     pass
