@@ -220,13 +220,21 @@ class BASNet(nn.Module):
         # -------------Decoder-------------
         ob = self.out_conv_bridge(bridge)  # 1 * 28 * 28
         ob_up = self.upscore4(ob)  # 1 * 224 * 224
-        so = torch.sigmoid(ob)  # 1 * 28 * 28  # 可考虑使用norm
-        so_up = torch.sigmoid(ob_up)  # 1 * 224 * 224  # 可考虑使用norm
+        so = torch.sigmoid(ob)  # 1 * 28 * 28  # 小输出
+        so_up = torch.sigmoid(ob_up)  # 1 * 224 * 224  # 大输出
 
         # More
         smc_logits, smc_l2norm, smc_sigmoid = self.salient_map_clustering(bridge, so)  # 显著图聚类：Salient Map Clustering
         cam = self.cluster_activation_map(smc_logits, bridge)  # 簇激活图：Cluster Activation Map
         sme = self.salient_map_divide(cam)  # 显著图划分：Salient Map Divide
+
+        ###########################
+        # x_data = np.transpose(x.data.numpy()[0], axes=[1, 2, 0])
+        # Image.fromarray(np.asarray(((x_data-np.min(x_data)) / np.max(x_data - np.min(x_data))) * 255, dtype=np.uint8)).show()
+        # Image.fromarray(np.asarray(so_up.data.numpy()[0][0] * 255, dtype=np.uint8)).show()
+        # x_data = np.sum(np.transpose(bridge.data.numpy()[0], axes=[1, 2, 0])[:,:,top_k_index[0]], axis=2)
+        # Image.fromarray(np.asarray(((x_data-np.min(x_data)) / np.max(x_data - np.min(x_data))) * 255, dtype=np.uint8)).show()
+        ###########################
 
         return so_up, sme, smc_logits, smc_l2norm
 
@@ -240,19 +248,22 @@ class BASNet(nn.Module):
 
     @staticmethod
     def cluster_activation_map(smc_logits, feature_for_cam, k=5):
-        top_k_value, top_k_index = torch.topk(smc_logits, k, 1)
-        cam = torch.cat([feature_for_cam[i:i+1, top_k_index[i], :, :].mean(
-            1, keepdim=True) for i in range(feature_for_cam.size()[0])])
+        # top_k_value, top_k_index = torch.topk(smc_logits, k, 1)
+        # cam = torch.cat([feature_for_cam[i:i+1, top_k_index[i], :, :].mean(1, keepdim=True)
+        #                  for i in range(feature_for_cam.size()[0])])
+        top_k_value, top_k_index = torch.topk(smc_logits, 1, 1)
+        cam = torch.cat([feature_for_cam[i:i+1, top_k_index[i], :, :] for i in range(feature_for_cam.size()[0])])
         return cam
 
-    def salient_map_divide(self, cam, obj_th=0.7, bg_th=0.05):
+    def salient_map_divide(self, cam, obj_th=0.7, bg_th=0.1):
         for_cam_norm = self._feature_norm(cam)  # 1 * 28 * 28
-        for_cam_norm_up = self.upscore4(for_cam_norm)  # 1 * 224 * 224
 
-        mask = torch.zeros(tuple(for_cam_norm_up.size())).fill_(255).cuda()
-        mask = self._mark_obj(mask, for_cam_norm_up, 1.0, threshold=obj_th)
-        mask_pos = for_cam_norm_up < bg_th
-        mask[mask_pos] = 0.0
+        mask = torch.zeros(tuple(for_cam_norm.size())).fill_(255)
+        mask[for_cam_norm > obj_th] = 1.0
+        mask[for_cam_norm < bg_th] = 0.0
+
+        if torch.cuda.is_available():
+            mask.cuda()
         return mask
 
     @staticmethod
@@ -262,20 +273,6 @@ class BASNet(nn.Module):
         batch_max, _ = torch.max(feature_map.view((feature_shape[0], -1)), dim=-1, keepdim=True)
         norm = torch.div(feature_map.view((feature_shape[0], -1)) - batch_min, batch_max - batch_min)
         return norm.view(feature_shape)
-
-    @staticmethod
-    def _mark_obj(mask, heat_map, label=1.0, threshold=0.7):
-        for i in range(heat_map.size()[0]):
-            mask_pos = heat_map[i] > threshold
-            if torch.sum(mask_pos.float()).cpu().numpy() < 30:
-                threshold = torch.max(heat_map[i]) * 0.7
-                mask_pos = heat_map[i] > threshold
-                pass
-            label_i = mask[i]
-            label_i[mask_pos.data] = label
-            mask[i] = label_i
-            pass
-        return mask
 
     pass
 
@@ -335,7 +332,10 @@ class MICProduceClass(object):
         pass
 
     def get_label(self, indexes):
-        return torch.tensor(self.classes[indexes.cpu().numpy()]).long().cuda()
+        tem = torch.tensor(self.classes[indexes.cpu().numpy()]).long()
+        if torch.cuda.is_available():
+            tem.cuda()
+        return tem
 
     pass
 
@@ -363,14 +363,19 @@ class BASRunner(object):
         self.dataloader_usod = DataLoader(self.dataset_usod, self.batch_size_train, shuffle=True, num_workers=1)
 
         # Model
-        self.net = BASNet(3, pretrained=True).cuda()
+        self.net = BASNet(3, pretrained=True)
+        if torch.cuda.is_available():
+            self.net.cuda()
 
         # MIC
         self.produce_class = MICProduceClass(n_sample=len(self.dataset_usod), out_dim=clustering_out_dim, ratio=3)
 
         # Loss and Optim
-        self.bce_loss = nn.BCELoss().cuda()
-        self.mic_loss = nn.CrossEntropyLoss().cuda()
+        self.bce_loss = nn.BCELoss()
+        self.mic_loss = nn.CrossEntropyLoss()
+        if torch.cuda.is_available():
+            self.bce_loss.cuda()
+            self.mic_loss.cuda()
         self.optimizer = optim.Adam(self.net.parameters(), lr=0.001, betas=(0.9, 0.999), eps=1e-08, weight_decay=0)
         pass
 
@@ -409,7 +414,10 @@ class BASRunner(object):
 
                 self.produce_class.reset()
                 for batch_idx, (inputs, labels, indexes) in enumerate(self.dataloader_usod):
-                    inputs, indexes = inputs.type(torch.FloatTensor).cuda(), indexes.cuda()
+                    inputs = inputs.type(torch.FloatTensor)
+                    if torch.cuda.is_available():
+                        inputs, indexes = inputs.cuda(), indexes.cuda()
+
                     so_up_out, sme_out, smc_logits_out, smc_l2norm_out = self.net(inputs)
                     self.produce_class.cal_label(smc_l2norm_out, indexes)
                     pass
@@ -423,7 +431,9 @@ class BASRunner(object):
             all_loss, all_loss_bce, all_loss_mic = 0.0, 0.0, 0.0
             self.net.train()
             for i, (inputs, labels, indexes) in enumerate(self.dataloader_usod):
-                inputs, indexes = inputs.type(torch.FloatTensor).cuda(), indexes.cuda()
+                inputs = inputs.type(torch.FloatTensor)
+                if torch.cuda.is_available():
+                    inputs, indexes = inputs.cuda(), indexes.cuda()
                 self.optimizer.zero_grad()
 
                 so_up_out, sme_out, smc_logits_out, smc_l2norm_out = self.net(inputs)
@@ -472,8 +482,8 @@ class BASRunner(object):
 if __name__ == '__main__':
     os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
-    # bas_runner = BASRunner(batch_size_train=2, data_dir='D:\\data\\SOD\\DUTS\\DUTS-TR')
-    bas_runner = BASRunner()
-    # bas_runner.load_model('./saved_models/basnet_bce_simple/basnet_2100_train_0.310.pth')
+    bas_runner = BASRunner(batch_size_train=2, data_dir='D:\\data\\SOD\\DUTS\\DUTS-TR')
+    # bas_runner = BASRunner()
+    # bas_runner.load_model('./saved_models/my_train_mic_1/usod_5_train_4.661.pth')
     bas_runner.train()
     pass

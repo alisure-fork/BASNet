@@ -32,7 +32,7 @@ if __name__ == '__main__':
     os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
     # --------- 1. get image path and name ---------
-    model_dir = './saved_models/my_train_mic_1/usod_45_train_2.651.pth'
+    model_dir = './saved_models/my_train_mic_1/usod_5_train_4.661.pth'
     image_dir = './test_data/test_images/'
     prediction_dir = Tools.new_dir('./test_data/my_train_mic_1_45')
     img_name_list = glob.glob(image_dir + '*.jpg')
