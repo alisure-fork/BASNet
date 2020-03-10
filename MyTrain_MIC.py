@@ -10,7 +10,6 @@ import torch.nn.functional as F
 from skimage import io, transform
 from torchvision import transforms
 from alisuretool.Tools import Tools
-from torch.autograd import Variable
 from torch.utils.data import DataLoader, Dataset
 
 
@@ -98,7 +97,7 @@ class DatasetUSOD(Dataset):
 
     def __getitem__(self, idx):
         image = io.imread(self.image_name_list[idx])
-        label_3 = np.zeros(image.shape) if self.label_name_list else io.imread(self.label_name_list[idx])
+        label_3 = io.imread(self.label_name_list[idx]) if self.label_name_list else np.zeros(image.shape)
 
         label = np.zeros(label_3.shape[0:2])
         if 3 == len(label_3.shape):
@@ -221,8 +220,8 @@ class BASNet(nn.Module):
         # -------------Decoder-------------
         ob = self.out_conv_bridge(bridge)  # 1 * 28 * 28
         ob_up = self.upscore4(ob)  # 1 * 224 * 224
-        so = F.sigmoid(ob)  # 1 * 28 * 28  # 可考虑使用norm
-        so_up = F.sigmoid(ob_up)  # 1 * 224 * 224  # 可考虑使用norm
+        so = torch.sigmoid(ob)  # 1 * 28 * 28  # 可考虑使用norm
+        so_up = torch.sigmoid(ob_up)  # 1 * 224 * 224  # 可考虑使用norm
 
         # More
         smc_logits, smc_l2norm, smc_sigmoid = self.salient_map_clustering(bridge, so)  # 显著图聚类：Salient Map Clustering
@@ -250,7 +249,7 @@ class BASNet(nn.Module):
         for_cam_norm = self._feature_norm(cam)  # 1 * 28 * 28
         for_cam_norm_up = self.upscore4(for_cam_norm)  # 1 * 224 * 224
 
-        mask = torch.zeros((for_cam_norm_up.size()[0], 1, 224, 224)).fill_(255).cuda()
+        mask = torch.zeros(tuple(for_cam_norm_up.size())).fill_(255).cuda()
         mask = self._mark_obj(mask, for_cam_norm_up, 1.0, threshold=obj_th)
         mask_pos = for_cam_norm_up < bg_th
         mask[mask_pos] = 0.0
@@ -336,7 +335,7 @@ class MICProduceClass(object):
         pass
 
     def get_label(self, indexes):
-        return torch.tensor(self.classes[indexes.cpu()]).long().cuda()
+        return torch.tensor(self.classes[indexes.cpu().numpy()]).long().cuda()
 
     pass
 
@@ -410,13 +409,13 @@ class BASRunner(object):
 
                 self.produce_class.reset()
                 for batch_idx, (inputs, labels, indexes) in enumerate(self.dataloader_usod):
-                    inputs = inputs.type(torch.FloatTensor).cuda()
-                    labels, indexes = labels.type(torch.FloatTensor).cuda(), indexes.cuda()
+                    inputs, indexes = inputs.type(torch.FloatTensor).cuda(), indexes.cuda()
                     so_up_out, sme_out, smc_logits_out, smc_l2norm_out = self.net(inputs)
                     self.produce_class.cal_label(smc_l2norm_out, indexes)
                     pass
 
                 Tools.print("Epoch: [{}] {}/{}".format(epoch, self.produce_class.count, self.produce_class.count_2))
+                Tools.print()
                 pass
 
             ###########################################################################
@@ -424,14 +423,14 @@ class BASRunner(object):
             all_loss, all_loss_bce, all_loss_mic = 0.0, 0.0, 0.0
             self.net.train()
             for i, (inputs, labels, indexes) in enumerate(self.dataloader_usod):
-                inputs = inputs.type(torch.FloatTensor).cuda()
-                labels, indexes = labels.type(torch.FloatTensor).cuda(), indexes.cuda()
+                inputs, indexes = inputs.type(torch.FloatTensor).cuda(), indexes.cuda()
                 self.optimizer.zero_grad()
 
                 so_up_out, sme_out, smc_logits_out, smc_l2norm_out = self.net(inputs)
-                targets = self.produce_class.get_label(indexes)
+                mic_labels = self.produce_class.get_label(indexes)
 
-                loss, loss_bce, loss_mic = self.all_loss_fusion(so_up_out, sme_out, smc_logits_out, targets)
+                # Tools.print("{} {} {}".format(i, smc_logits_out.size(), mic_labels.size()))
+                loss, loss_bce, loss_mic = self.all_loss_fusion(so_up_out, sme_out, smc_logits_out, mic_labels)
                 loss.backward()
                 self.optimizer.step()
 
@@ -451,7 +450,7 @@ class BASRunner(object):
             # 2 保存模型
             if epoch % save_epoch_freq == 0:
                 save_file_name = Tools.new_dir(os.path.join(
-                    self.model_dir, "usod_{}_train_{:.3f}.pth".format(epoch, len(self.dataloader_usod))))
+                    self.model_dir, "usod_{}_train_{:.3f}.pth".format(epoch, all_loss / len(self.dataloader_usod))))
                 torch.save(self.net.state_dict(), save_file_name)
 
                 Tools.print()
