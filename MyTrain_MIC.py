@@ -238,7 +238,7 @@ class BASNet(nn.Module):
         # Image.fromarray(np.asarray(((x_data-np.min(x_data)) / np.max(x_data - np.min(x_data))) * 255, dtype=np.uint8)).show()
         ###########################
 
-        return so, so_up, sme, smc_logits, smc_l2norm
+        return so, so_up, cam, sme, smc_logits, smc_l2norm
 
     def salient_map_clustering(self, feature_for_smc, mask_b):
         smc = feature_for_smc * mask_b  # 512 * 28 * 28
@@ -254,6 +254,7 @@ class BASNet(nn.Module):
         # cam = torch.cat([feature_for_cam[i:i+1, top_k_index[i], :, :].mean(1, keepdim=True)
         #                  for i in range(feature_for_cam.size()[0])])
         top_k_value, top_k_index = torch.topk(smc_logits, 1, 1)
+        Tools.print("{} {}".format(top_k_value, top_k_index))
         cam = torch.cat([feature_for_cam[i:i+1, top_k_index[i], :, :] for i in range(feature_for_cam.size()[0])])
         return cam
 
@@ -416,7 +417,7 @@ class BASRunner(object):
                     inputs = inputs.cuda() if torch.cuda.is_available() else inputs
                     indexes = indexes.cuda() if torch.cuda.is_available() else indexes
 
-                    so_out, so_up_out, sme_out, smc_logits_out, smc_l2norm_out = self.net(inputs)
+                    so_out, so_up_out, cam_out, sme_out, smc_logits_out, smc_l2norm_out = self.net(inputs)
                     self.produce_class.cal_label(smc_l2norm_out, indexes)
                     pass
 
@@ -434,7 +435,7 @@ class BASRunner(object):
                 indexes = indexes.cuda() if torch.cuda.is_available() else indexes
                 self.optimizer.zero_grad()
 
-                so_out, so_up_out, sme_out, smc_logits_out, smc_l2norm_out = self.net(inputs)
+                so_out, so_up_out, cam_out, sme_out, smc_logits_out, smc_l2norm_out = self.net(inputs)
                 mic_labels = self.produce_class.get_label(indexes)
                 mic_labels = mic_labels.cuda() if torch.cuda.is_available() else mic_labels
 

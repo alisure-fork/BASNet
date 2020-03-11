@@ -29,12 +29,12 @@ def save_output(image_name, predict, d_dir):
 
 if __name__ == '__main__':
 
-    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
     # --------- 1. get image path and name ---------
-    model_dir = './saved_models/my_train_mic_1/usod_5_train_4.913.pth'
+    model_dir = './saved_models/my_train_mic_only/usod_10_train_3.494.pth'
     image_dir = './test_data/test_images/'
-    prediction_dir = Tools.new_dir('./test_data/my_train_mic_1_5')
+    prediction_dir = Tools.new_dir('./test_data/my_train_mic_only_10')
     img_name_list = glob.glob(image_dir + '*.jpg')
 
     # --------- 2. data loader ---------
@@ -56,9 +56,9 @@ if __name__ == '__main__':
         Tools.print("inference: {}".format(img_name_list[i_test]))
         inputs_test = inputs_test.type(torch.FloatTensor).cuda()
 
-        so_out, so_up_out, sme_out, smc_logits_out, smc_l2norm_out = net(inputs_test)
+        so_out, so_up_out, cam_out, sme_out, smc_logits_out, smc_l2norm_out = net(inputs_test)
 
         # normalization and save
-        pred = norm_PRED(so_up_out[:, 0, :, :])
+        pred = norm_PRED(cam_out[:, 0, :, :])
         save_output(img_name_list[i_test], pred, prediction_dir)
         pass
