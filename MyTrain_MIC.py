@@ -230,19 +230,16 @@ class BASNet(nn.Module):
         cam = self.cluster_activation_map(smc_logits, bridge)  # 簇激活图：Cluster Activation Map
         sme = self.salient_map_divide(cam)  # 显著图划分：Salient Map Divide
 
-        ###########################
-        # x_data = np.transpose(x.data.numpy()[0], axes=[1, 2, 0])
-        # Image.fromarray(np.asarray(((x_data-np.min(x_data)) / np.max(x_data - np.min(x_data))) * 255, dtype=np.uint8)).show()
-        # Image.fromarray(np.asarray(so_up.data.numpy()[0][0] * 255, dtype=np.uint8)).show()
-        # x_data = np.sum(np.transpose(bridge.data.numpy()[0], axes=[1, 2, 0])[:,:,top_k_index[0]], axis=2)
-        # Image.fromarray(np.asarray(((x_data-np.min(x_data)) / np.max(x_data - np.min(x_data))) * 255, dtype=np.uint8)).show()
-        ###########################
-
-        return so, so_up, cam, sme, smc_logits, smc_l2norm
+        return so, so_up, cam, sme, smc_logits, smc_l2norm, bridge
 
     def salient_map_clustering(self, feature_for_smc, mask_b):
-        smc = feature_for_smc * mask_b  # 512 * 28 * 28
-        smc_logits = F.adaptive_avg_pool2d(smc, 1).view((smc.size()[0], -1))  # 512
+        # smc = feature_for_smc * mask_b  # 512 * 28 * 28
+        smc = feature_for_smc  # 512 * 28 * 28
+
+        gaussian_mask = self._mask_gaussian([smc.size()[2], smc.size()[3]])
+        smc_gaussian = smc * torch.tensor(gaussian_mask).cuda()
+
+        smc_logits = F.adaptive_avg_pool2d(smc_gaussian, 1).view((smc_gaussian.size()[0], -1))  # 512
 
         smc_l2norm = self.mic_l2norm(smc_logits)
         smc_sigmoid = torch.sigmoid(smc_logits)
@@ -254,7 +251,6 @@ class BASNet(nn.Module):
         # cam = torch.cat([feature_for_cam[i:i+1, top_k_index[i], :, :].mean(1, keepdim=True)
         #                  for i in range(feature_for_cam.size()[0])])
         top_k_value, top_k_index = torch.topk(smc_logits, 1, 1)
-        Tools.print("{} {}".format(top_k_value, top_k_index))
         cam = torch.cat([feature_for_cam[i:i+1, top_k_index[i], :, :] for i in range(feature_for_cam.size()[0])])
         return cam
 
@@ -275,6 +271,23 @@ class BASNet(nn.Module):
         batch_max, _ = torch.max(feature_map.view((feature_shape[0], -1)), dim=-1, keepdim=True)
         norm = torch.div(feature_map.view((feature_shape[0], -1)) - batch_min, batch_max - batch_min)
         return norm.view(feature_shape)
+
+    @staticmethod
+    def _mask_gaussian(image_size, where=None, sigma=30):
+
+        x = np.arange(0, image_size[1], 1, float)
+        y = np.arange(0, image_size[0], 1, float)
+        y = y[:, np.newaxis]
+
+        if where:
+            x0, y0 = where[1], where[0]
+        else:
+            x0, y0 = image_size[1] // 2, image_size[0] // 2
+            pass
+
+        # 生成高斯掩码
+        mask = np.exp(-4 * np.log(2) * ((x - x0) ** 2 + (y - y0) ** 2) / sigma ** 2).astype(np.float32)
+        return mask
 
     pass
 
@@ -398,6 +411,7 @@ class BASRunner(object):
 
         # loss_all = loss_bce + loss_mic
         loss_all = loss_mic
+
         return loss_all, loss_bce, loss_mic
 
     def train(self, save_epoch_freq=5, print_ite_num=100, update_epoch_freq=1):
@@ -417,7 +431,7 @@ class BASRunner(object):
                     inputs = inputs.cuda() if torch.cuda.is_available() else inputs
                     indexes = indexes.cuda() if torch.cuda.is_available() else indexes
 
-                    so_out, so_up_out, cam_out, sme_out, smc_logits_out, smc_l2norm_out = self.net(inputs)
+                    so_out, so_up_out, cam_out, sme_out, smc_logits_out, smc_l2norm_out, bridge_out = self.net(inputs)
                     self.produce_class.cal_label(smc_l2norm_out, indexes)
                     pass
 
@@ -435,7 +449,7 @@ class BASRunner(object):
                 indexes = indexes.cuda() if torch.cuda.is_available() else indexes
                 self.optimizer.zero_grad()
 
-                so_out, so_up_out, cam_out, sme_out, smc_logits_out, smc_l2norm_out = self.net(inputs)
+                so_out, so_up_out, cam_out, sme_out, smc_logits_out, smc_l2norm_out, bridge_out = self.net(inputs)
                 mic_labels = self.produce_class.get_label(indexes)
                 mic_labels = mic_labels.cuda() if torch.cuda.is_available() else mic_labels
 
@@ -483,7 +497,7 @@ if __name__ == '__main__':
     os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
     # bas_runner = BASRunner(batch_size_train=2, data_dir='D:\\data\\SOD\\DUTS\\DUTS-TR')
-    bas_runner = BASRunner()
+    bas_runner = BASRunner(model_dir="./saved_models/my_train_mic_only_nomask_mask")
     # bas_runner.load_model('./saved_models/my_train_mic_1/usod_5_train_4.661.pth')
     bas_runner.train()
     pass
