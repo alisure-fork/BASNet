@@ -196,13 +196,13 @@ class BASNet(nn.Module):
         self.bridge_conv_3 = nn.Conv2d(512, 512, 3, dilation=2, padding=2)
         self.bridge_bn_3 = nn.BatchNorm2d(512)
         self.bridge_relu_3 = nn.ReLU(inplace=True)
+        self.bridge_sigmoid_3 = nn.Sigmoid()
 
         # -------------Decoder-------------
+        # MIC 1
+        self.mic_l2norm = MICNormalize(2)
         self.out_conv_bridge = nn.Conv2d(512, 1, 3, padding=1)
         self.upscore4 = nn.Upsample(scale_factor=8, mode='bilinear')
-
-        # MIC
-        self.mic_l2norm = MICNormalize(2)
         pass
 
     def forward(self, x):
@@ -215,29 +215,35 @@ class BASNet(nn.Module):
         e4 = self.encoder4(e3)  # 512 * 28 * 28
 
         # -------------Bridge-------------
-        bridge = self.bridge_relu_3(self.bridge_bn_3(self.bridge_conv_3(
-            self.bridge_relu_2(self.bridge_bn_2(self.bridge_conv_2(
-                self.bridge_relu_1(self.bridge_bn_1(self.bridge_conv_1(e4)))))))))  # 512 * 28 * 28
+        bridge_1 = self.bridge_relu_1(self.bridge_bn_1(self.bridge_conv_1(e4)))
+        bridge_2 = self.bridge_relu_2(self.bridge_bn_2(self.bridge_conv_2(bridge_1)))
+        bridge_3 = self.bridge_bn_3(self.bridge_conv_3(bridge_2))
+        bridge_3_relu = self.bridge_relu_3(bridge_3)  # 512 * 28 * 28
+        bridge_3_sigmoid = self.bridge_sigmoid_3(bridge_3)
 
         # -------------Decoder-------------
-        ob = self.out_conv_bridge(bridge)  # 1 * 28 * 28
+        ob = self.out_conv_bridge(bridge_3_relu)  # 1 * 28 * 28
         ob_up = self.upscore4(ob)  # 1 * 224 * 224
         so = torch.sigmoid(ob)  # 1 * 28 * 28  # 小输出
         so_up = torch.sigmoid(ob_up)  # 1 * 224 * 224  # 大输出
 
         # More
-        smc_logits, smc_l2norm, smc_sigmoid = self.salient_map_clustering(bridge, so)  # 显著图聚类：Salient Map Clustering
-        cam = self.cluster_activation_map(smc_logits, bridge)  # 簇激活图：Cluster Activation Map
+        # 显著图聚类：Salient Map Clustering
+        smc_logits, smc_l2norm, smc_sigmoid = self.salient_map_clustering(bridge_3_sigmoid, so)
+        cam = self.cluster_activation_map(smc_logits, bridge_3_relu)  # 簇激活图：Cluster Activation Map
         sme = self.salient_map_divide(cam)  # 显著图划分：Salient Map Divide
 
-        return so, so_up, cam, sme, smc_logits, smc_l2norm, bridge
+        return so, so_up, cam, sme, smc_logits, smc_l2norm, bridge_3_relu
 
     def salient_map_clustering(self, feature_for_smc, mask_b):
+        # m1
         # smc = feature_for_smc * mask_b  # 512 * 28 * 28
         smc = feature_for_smc  # 512 * 28 * 28
 
-        gaussian_mask = self._mask_gaussian([smc.size()[2], smc.size()[3]])
+        # m2
+        gaussian_mask = self._mask_gaussian([smc.size()[2], smc.size()[3]], sigma=smc.size()[2] * smc.size()[3] // 2)
         smc_gaussian = smc * torch.tensor(gaussian_mask).cuda()
+        # smc_gaussian = smc
 
         smc_logits = F.adaptive_avg_pool2d(smc_gaussian, 1).view((smc_gaussian.size()[0], -1))  # 512
 
@@ -273,7 +279,7 @@ class BASNet(nn.Module):
         return norm.view(feature_shape)
 
     @staticmethod
-    def _mask_gaussian(image_size, where=None, sigma=30):
+    def _mask_gaussian(image_size, where=None, sigma=20):
 
         x = np.arange(0, image_size[1], 1, float)
         y = np.arange(0, image_size[0], 1, float)
@@ -286,7 +292,7 @@ class BASNet(nn.Module):
             pass
 
         # 生成高斯掩码
-        mask = np.exp(-4 * np.log(2) * ((x - x0) ** 2 + (y - y0) ** 2) / sigma ** 2).astype(np.float32)
+        mask = np.exp(-4 * np.log(2) * ((x - x0) ** 2 + (y - y0) ** 2) / sigma).astype(np.float32)
         return mask
 
     pass
@@ -497,7 +503,7 @@ if __name__ == '__main__':
     os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
     # bas_runner = BASRunner(batch_size_train=2, data_dir='D:\\data\\SOD\\DUTS\\DUTS-TR')
-    bas_runner = BASRunner(model_dir="./saved_models/my_train_mic_only_nomask_mask")
+    bas_runner = BASRunner(batch_size_train=12, model_dir="./saved_models/my_train_mic_sigmoid_mask")
     # bas_runner.load_model('./saved_models/my_train_mic_1/usod_5_train_4.661.pth')
     bas_runner.train()
     pass

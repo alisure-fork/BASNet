@@ -11,11 +11,14 @@ from MyTrain_MIC import BASNet, RescaleT, ToTensor, DatasetUSOD
 
 if __name__ == '__main__':
 
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
     # --------- 1. get image path and name ---------
-    model_dir = './saved_models/my_train_mic_only/usod_80_train_1.992.pth'
-    prediction_dir = Tools.new_dir('./test_data/my_train_mic_only_80_image2')
+    # model_dir = './saved_models/my_train_mic_only/usod_80_train_1.992.pth'
+    # model_dir = './saved_models/my_train_mic_only_nomask_mask/usod_60_train_1.749.pth'
+    model_dir = './saved_models/my_train_mic_only_norelu_mask/usod_55_train_2.062.pth'
+    # model_dir = './saved_models/my_train_mic_only_norelu/usod_75_train_2.160.pth'
+    prediction_dir = Tools.new_dir('./test_data/my_train_mic_only_norelu_mask_55_image_relu')
     image_dir = '/mnt/4T/Data/SOD/DUTS/DUTS-TR/DUTS-TR-Image/'
 
     # --------- 2. data loader ---------
