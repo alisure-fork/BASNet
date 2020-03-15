@@ -193,9 +193,8 @@ class ConvBlock(nn.Module):
 
 class BASNet(nn.Module):
 
-    def __init__(self, n_channels, clustering_num=512, pretrained=True):
+    def __init__(self, n_channels, clustering_num_list=None, pretrained=True):
         super(BASNet, self).__init__()
-
         resnet = models.resnet18(pretrained=pretrained)
 
         # -------------Encoder--------------
@@ -205,13 +204,13 @@ class BASNet(nn.Module):
         self.encoder3 = resnet.layer3  # 56
         self.encoder4 = resnet.layer4  # 28
 
-        self.clustering_num = clustering_num
-
         # -------------MIC-------------
+        self.clustering_num_list = list([64, 96, 128]) if clustering_num_list is None else clustering_num_list
+
         # MIC 1
-        self.mic_1_c1 = ConvBlock(512, self.clustering_num, has_relu=True)
+        self.mic_1_c1 = ConvBlock(512, self.clustering_num_list[0], has_relu=True)
         self.mic_1_l2norm = MICNormalize(2)
-        # self.mic_1_out_c = nn.Conv2d(self.clustering_num, 1, 3, padding=1)
+        # self.mic_1_out_c = nn.Conv2d(self.clustering_num_list[0], 1, 3, padding=1)
         # self.mic_1_up_8 = nn.Upsample(scale_factor=8, mode='bilinear')
 
         # MIC 2
@@ -219,10 +218,9 @@ class BASNet(nn.Module):
         self.mic_2_b1 = ResBlock(512, 512)  # 14
         self.mic_2_b2 = ResBlock(512, 512)
         self.mic_2_b3 = ResBlock(512, 512)
-
-        self.mic_2_c1 = ConvBlock(512, self.clustering_num, has_relu=True)
+        self.mic_2_c1 = ConvBlock(512, self.clustering_num_list[1], has_relu=True)
         self.mic_2_l2norm = MICNormalize(2)
-        # self.mic_2_out_c = nn.Conv2d(self.clustering_num, 1, 3, padding=1)
+        # self.mic_2_out_c = nn.Conv2d(self.clustering_num_list[1], 1, 3, padding=1)
         # self.mic_2_up_16 = nn.Upsample(scale_factor=16, mode='bilinear')
 
         # MIC 3
@@ -230,12 +228,10 @@ class BASNet(nn.Module):
         self.mic_3_b1 = ResBlock(512, 512)  # 7
         self.mic_3_b2 = ResBlock(512, 512)
         self.mic_3_b3 = ResBlock(512, 512)
-
-        self.mic_3_c1 = ConvBlock(512, self.clustering_num, has_relu=True)
+        self.mic_3_c1 = ConvBlock(512, self.clustering_num_list[2], has_relu=True)
         self.mic_3_l2norm = MICNormalize(2)
-        # self.mic_3_out_c = nn.Conv2d(self.clustering_num, 1, 3, padding=1)
+        # self.mic_3_out_c = nn.Conv2d(self.clustering_num_list[2], 1, 3, padding=1)
         # self.mic_3_up_32 = nn.Upsample(scale_factor=32, mode='bilinear')
-
         pass
 
     def forward(self, x):
@@ -460,7 +456,9 @@ class MICProduceClass(object):
 
 class BASRunner(object):
 
-    def __init__(self, epoch_num=100000, batch_size_train=8, clustering_out_dim=64, clustering_ratio=1,
+    def __init__(self, epoch_num=100000, batch_size_train=8,
+                 clustering_num_1=64, clustering_num_2=96, clustering_num_3=128,
+                 clustering_ratio_1=1, clustering_ratio_2=1.5, clustering_ratio_3=2,
                  data_dir='/mnt/4T/Data/SOD/DUTS/DUTS-TR', tra_image_dir='DUTS-TR-Image',
                  tra_label_dir='DUTS-TR-Mask', model_dir="./saved_models/my_train_mic_only"):
         self.epoch_num = epoch_num
@@ -477,12 +475,17 @@ class BASRunner(object):
         self.dataloader_usod = DataLoader(self.dataset_usod, self.batch_size_train, shuffle=True, num_workers=1)
 
         # Model
-        self.net = BASNet(3, clustering_num=clustering_out_dim, pretrained=True)
+        self.net = BASNet(3, clustering_num_list=[clustering_num_1,
+                                                  clustering_num_2, clustering_num_3], pretrained=True)
         self.net = self.net.cuda() if torch.cuda.is_available() else self.net
 
         # MIC
-        self.produce_class = MICProduceClass(n_sample=len(self.dataset_usod),
-                                             out_dim=clustering_out_dim, ratio=clustering_ratio)
+        self.produce_class_1 = MICProduceClass(n_sample=len(self.dataset_usod),
+                                               out_dim=clustering_num_1, ratio=clustering_ratio_1)
+        self.produce_class_2 = MICProduceClass(n_sample=len(self.dataset_usod),
+                                               out_dim=clustering_num_2, ratio=clustering_ratio_2)
+        self.produce_class_3 = MICProduceClass(n_sample=len(self.dataset_usod),
+                                               out_dim=clustering_num_3, ratio=clustering_ratio_3)
 
         # Loss and Optim
         self.bce_loss = nn.BCELoss()
@@ -506,14 +509,14 @@ class BASRunner(object):
         Tools.print("train labels: {}".format(len(tra_lbl_name_list)))
         return tra_img_name_list, tra_lbl_name_list
 
-    def all_loss_fusion(self, mic_1_out, mic_2_out, mic_3_out, mic_label):
-        loss_mic_1 = self.mic_loss(mic_1_out, mic_label)
-        loss_mic_2 = self.mic_loss(mic_2_out, mic_label)
-        loss_mic_3 = self.mic_loss(mic_3_out, mic_label)
+    def all_loss_fusion(self, mic_1_out, mic_2_out, mic_3_out, mic_labels_1, mic_labels_2, mic_labels_3):
+        loss_mic_1 = self.mic_loss(mic_1_out, mic_labels_1)
+        loss_mic_2 = self.mic_loss(mic_2_out, mic_labels_2)
+        loss_mic_3 = self.mic_loss(mic_3_out, mic_labels_3)
 
-        # loss_all = loss_mic_1 + loss_mic_2 + loss_mic_3
+        loss_all = loss_mic_1 + loss_mic_2 + loss_mic_3
         # loss_all = loss_mic_1 + loss_mic_2
-        loss_all = loss_mic_1
+        # loss_all = loss_mic_1
         return loss_all, loss_mic_1, loss_mic_2, loss_mic_3
 
     def train(self, save_epoch_freq=5, print_ite_num=100, update_epoch_freq=1):
@@ -527,7 +530,9 @@ class BASRunner(object):
                 Tools.print("Update label {} .......".format(epoch))
                 self.net.eval()
 
-                self.produce_class.reset()
+                self.produce_class_1.reset()
+                self.produce_class_2.reset()
+                self.produce_class_3.reset()
                 for batch_idx, (inputs, labels, indexes) in enumerate(self.dataloader_usod):
                     inputs = inputs.type(torch.FloatTensor)
                     inputs = inputs.cuda() if torch.cuda.is_available() else inputs
@@ -535,12 +540,14 @@ class BASRunner(object):
 
                     return_1, return_2, return_3 = self.net(inputs)
 
-                    smc_l2norm_out = return_1["smc_l2norm"]
-                    # smc_l2norm_out = return_2["smc_l2norm"]
-                    self.produce_class.cal_label(smc_l2norm_out, indexes)
+                    self.produce_class_1.cal_label(return_1["smc_l2norm"], indexes)
+                    self.produce_class_2.cal_label(return_2["smc_l2norm"], indexes)
+                    self.produce_class_3.cal_label(return_3["smc_l2norm"], indexes)
                     pass
 
-                Tools.print("Epoch: [{}] {}/{}".format(epoch, self.produce_class.count, self.produce_class.count_2))
+                Tools.print("Epoch: [{}] {}/{} {}/{} {}/{}".format(
+                    epoch, self.produce_class_1.count, self.produce_class_1.count_2, self.produce_class_2.count,
+                    self.produce_class_2.count_2, self.produce_class_3.count, self.produce_class_3.count_2))
                 Tools.print()
                 pass
 
@@ -556,11 +563,16 @@ class BASRunner(object):
 
                 return_1, return_2, return_3 = self.net(inputs)
 
-                mic_labels = self.produce_class.get_label(indexes)
-                mic_labels = mic_labels.cuda() if torch.cuda.is_available() else mic_labels
+                mic_labels_1 = self.produce_class_1.get_label(indexes)
+                mic_labels_1 = mic_labels_1.cuda() if torch.cuda.is_available() else mic_labels_1
+                mic_labels_2 = self.produce_class_2.get_label(indexes)
+                mic_labels_2 = mic_labels_2.cuda() if torch.cuda.is_available() else mic_labels_2
+                mic_labels_3 = self.produce_class_3.get_label(indexes)
+                mic_labels_3 = mic_labels_3.cuda() if torch.cuda.is_available() else mic_labels_3
 
                 loss, loss_mic_1, loss_mic_2, loss_mic_3 = self.all_loss_fusion(
-                    return_1["smc_logits"], return_2["smc_logits"], return_3["smc_logits"], mic_labels)
+                    return_1["smc_logits"], return_2["smc_logits"], return_3["smc_logits"],
+                    mic_labels_1, mic_labels_2, mic_labels_3)
                 loss.backward()
                 self.optimizer.step()
 
@@ -607,11 +619,11 @@ class BASRunner(object):
 
 
 if __name__ == '__main__':
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
     # bas_runner = BASRunner(batch_size_train=2, data_dir='D:\\data\\SOD\\DUTS\\DUTS-TR')
     # bas_runner = BASRunner(batch_size_train=12, model_dir="./saved_models/my_mic_123_mask")
-    bas_runner = BASRunner(batch_size_train=12, model_dir="./saved_models/my_mic_1_1_mask")
+    bas_runner = BASRunner(batch_size_train=12, model_dir="./saved_models/my_mic_123_diff_mask")
     # bas_runner.load_model('./saved_models/my_train_mic_1/usod_5_train_4.661.pth')
     bas_runner.train()
     pass

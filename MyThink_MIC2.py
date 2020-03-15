@@ -6,7 +6,7 @@ from skimage import io
 from torchvision import transforms
 from alisuretool.Tools import Tools
 from torch.utils.data import DataLoader
-from MyTrain_MIC import BASNet, RescaleT, ToTensor, DatasetUSOD
+from MyTrain_MIC2 import BASNet, RescaleT, ToTensor, DatasetUSOD
 
 
 if __name__ == '__main__':
@@ -14,8 +14,10 @@ if __name__ == '__main__':
     os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
     # --------- 1. get path ---------
-    model_dir = './saved_models/my_train_mic_only_norelu_mask/usod_55_train_2.062.pth'
-    prediction_dir = Tools.new_dir('./test_data/my_train_mic_only_norelu_mask_55_image_relu')
+    # model_dir = './saved_models/my_mic_1_1_mask/usod_35_train_1.005.pth'
+    # prediction_dir = Tools.new_dir('./test_data/my_mic_1_1_mask_35_image')
+    model_dir = './saved_models/my_mic_123_2_mask/usod_35_train_3.955.pth'
+    prediction_dir = Tools.new_dir('./test_data/my_mic_123_2_mask_35_image')
 
     # --------- 2. data loader ---------
     image_dir = '/mnt/4T/Data/SOD/DUTS/DUTS-TR/DUTS-TR-Image/'
@@ -26,7 +28,7 @@ if __name__ == '__main__':
 
     # --------- 3. model define ---------
     Tools.print("...load BASNet...")
-    net = BASNet(3, pretrained=False)
+    net = BASNet(3, clustering_num=64, pretrained=False)
     if torch.cuda.is_available():
         net.cuda()
     net.load_state_dict(torch.load(model_dir))
