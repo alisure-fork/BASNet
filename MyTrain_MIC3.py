@@ -251,7 +251,7 @@ class BASNet(nn.Module):
         # mic_1_out_sigmoid = torch.sigmoid(mic_1_out)  # 1 * 28 * 28  # 小输出
         # mic_1_out_up_sigmoid = torch.sigmoid(mic_1_out_up)  # 1 * 224 * 224  # 大输出
 
-        smc_logits_1, smc_l2norm_1, smc_sigmoid_1 = self.salient_map_clustering(mic_1)  # 显著图聚类：Salient Map Clustering
+        smc_logits_1, smc_l2norm_1, smc_sigmoid_1 = self.salient_map_clustering(mic_1, which=1)
         # cam_1 = self.cluster_activation_map(smc_logits_1, mic_1)  # 簇激活图：Cluster Activation Map
         # sme_1 = self.salient_map_divide(cam_1)  # 显著图划分：Salient Map Divide
 
@@ -281,7 +281,7 @@ class BASNet(nn.Module):
         # mic_2_out_sigmoid = torch.sigmoid(mic_2_out)  # 1 * 14 * 14  # 小输出
         # mic_2_out_up_sigmoid = torch.sigmoid(mic_2_out_up)  # 1 * 224 * 224  # 大输出
 
-        smc_logits_2, smc_l2norm_2, smc_sigmoid_2 = self.salient_map_clustering(mic_2)  # 显著图聚类：Salient Map Clustering
+        smc_logits_2, smc_l2norm_2, smc_sigmoid_2 = self.salient_map_clustering(mic_2, which=2)
         # cam_2 = self.cluster_activation_map(smc_logits_2, mic_2)  # 簇激活图：Cluster Activation Map
         # sme_2 = self.salient_map_divide(cam_2)  # 显著图划分：Salient Map Divide
 
@@ -311,7 +311,7 @@ class BASNet(nn.Module):
         # mic_3_out_sigmoid = torch.sigmoid(mic_3_out)  # 1 * 7 * 7  # 小输出
         # mic_3_out_up_sigmoid = torch.sigmoid(mic_3_out_up)  # 1 * 224 * 224  # 大输出
 
-        smc_logits_3, smc_l2norm_3, smc_sigmoid_3 = self.salient_map_clustering(mic_3)  # 显著图聚类：Salient Map Clustering
+        smc_logits_3, smc_l2norm_3, smc_sigmoid_3 = self.salient_map_clustering(mic_3, which=3)
         # cam_3 = self.cluster_activation_map(smc_logits_3, mic_3)  # 簇激活图：Cluster Activation Map
         # sme_3 = self.salient_map_divide(cam_3)  # 显著图划分：Salient Map Divide
 
@@ -331,13 +331,18 @@ class BASNet(nn.Module):
 
         return return_1, return_2, return_3
 
-    def salient_map_clustering(self, mic, has_mask=True):
+    def salient_map_clustering(self, mic, which=1, has_mask=False):
         # m1
         mic_gaussian = mic
         if has_mask:
-            gaussian_mask = self._mask_gaussian([mic.size()[2], mic.size()[3]],
-                                                sigma=mic.size()[2] * mic.size()[3] // 2)
-            mic_gaussian = mic * torch.tensor(gaussian_mask).cuda()
+            if which == 1:
+                g_mask = self._mask_gaussian([mic.size()[2], mic.size()[3]], sigma=mic.size()[2] * mic.size()[3] // 2)
+                mic_gaussian = mic * torch.tensor(g_mask).cuda()
+            elif which == 2:
+                g_mask = self._mask_gaussian([mic.size()[2], mic.size()[3]], sigma=mic.size()[2] * mic.size()[3])
+                mic_gaussian = mic * torch.tensor(g_mask).cuda()
+            else:
+                mic_gaussian = mic
             pass
 
         smc_logits = F.adaptive_avg_pool2d(mic_gaussian, 1).view((mic_gaussian.size()[0], -1))  # 512
@@ -623,7 +628,7 @@ if __name__ == '__main__':
 
     # bas_runner = BASRunner(batch_size_train=2, data_dir='D:\\data\\SOD\\DUTS\\DUTS-TR')
     # bas_runner = BASRunner(batch_size_train=12, model_dir="./saved_models/my_mic_123_mask")
-    bas_runner = BASRunner(batch_size_train=12, model_dir="./saved_models/my_mic_123_diff_mask")
+    bas_runner = BASRunner(batch_size_train=12, model_dir="./saved_models/my_mic_123_diff_automask")
     # bas_runner.load_model('./saved_models/my_train_mic_1/usod_5_train_4.661.pth')
     bas_runner.train()
     pass
