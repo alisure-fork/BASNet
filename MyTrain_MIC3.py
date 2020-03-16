@@ -477,7 +477,7 @@ class BASRunner(object):
         self.tra_img_name_list, self.tra_lbl_name_list = self.get_tra_img_label_name()
         self.dataset_usod = DatasetUSOD(img_name_list=self.tra_img_name_list, lbl_name_list=self.tra_lbl_name_list,
                                         transform=transforms.Compose([RescaleT(256), RandomCrop(224), ToTensor()]))
-        self.dataloader_usod = DataLoader(self.dataset_usod, self.batch_size_train, shuffle=True, num_workers=1)
+        self.dataloader_usod = DataLoader(self.dataset_usod, self.batch_size_train, shuffle=True, num_workers=8)
 
         # Model
         self.net = BASNet(3, clustering_num_list=[clustering_num_1,
@@ -624,7 +624,7 @@ class BASRunner(object):
 
 
 if __name__ == '__main__':
-    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
     # bas_runner = BASRunner(batch_size_train=2, data_dir='D:\\data\\SOD\\DUTS\\DUTS-TR')
     # bas_runner = BASRunner(batch_size_train=12, model_dir="./saved_models/my_mic_123_mask")
