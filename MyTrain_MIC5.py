@@ -25,7 +25,7 @@ class DatasetUSOD(Dataset):
 
         self.is_train = is_train
         self.transform_train = transforms.Compose([
-            transforms.RandomResizedCrop(size=224, scale=(0.2, 1.)),
+            transforms.RandomResizedCrop(size=224, scale=(0.3, 1.)),
             transforms.ColorJitter(0.4, 0.4, 0.4, 0.4),
             transforms.RandomGrayscale(p=0.2),
             transforms.RandomHorizontalFlip(),
@@ -53,19 +53,15 @@ class DatasetUSOD(Dataset):
 # 2 Model
 
 
-def conv3x3(in_planes, out_planes, stride=1):
-    return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=1, bias=False)
-
-
 class ResBlock(nn.Module):
     expansion = 1
 
     def __init__(self, inplanes, planes, stride=1, downsample=None):
         super(ResBlock, self).__init__()
-        self.conv1 = conv3x3(inplanes, planes, stride)
+        self.conv1 = nn.Conv2d(inplanes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(planes)
         self.relu = nn.ReLU(inplace=True)
-        self.conv2 = conv3x3(planes, planes)
+        self.conv2 = nn.Conv2d(inplanes, planes, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(planes)
         self.downsample = downsample
         self.stride = stride
@@ -98,7 +94,7 @@ class ConvBlock(nn.Module):
         super(ConvBlock, self).__init__()
         self.has_relu = has_relu
 
-        self.conv = conv3x3(cin, cout, stride)
+        self.conv = nn.Conv2d(cin, cout, kernel_size=3, stride=stride, padding=1, bias=False)
         self.bn = nn.BatchNorm2d(cout)
         self.relu = nn.ReLU(inplace=True)
         pass
@@ -187,13 +183,14 @@ class BASNet(nn.Module):
         self.encoder4 = resnet.layer4  # 28
 
         # -------------MIC-------------
-        self.clustering_num_list = list([64, 96, 128]) if clustering_num_list is None else clustering_num_list
+        self.clustering_num_list = list([128, 256, 512]) if clustering_num_list is None else clustering_num_list
 
         # MIC 1
+        self.mic_1_b1 = ResBlock(512, 512)  # 28
+        self.mic_1_b2 = ResBlock(512, 512)
+        self.mic_1_b3 = ResBlock(512, 512)
         self.mic_1_c1 = ConvBlock(512, self.clustering_num_list[0], has_relu=True)
         self.mic_1_l2norm = MICNormalize(2)
-        # self.mic_1_out_c = nn.Conv2d(self.clustering_num_list[0], 1, 3, padding=1)
-        # self.mic_1_up_8 = nn.Upsample(scale_factor=8, mode='bilinear')
 
         # MIC 2
         self.mic_2_pool = nn.MaxPool2d(2, 2, ceil_mode=True)
@@ -202,8 +199,6 @@ class BASNet(nn.Module):
         self.mic_2_b3 = ResBlock(512, 512)
         self.mic_2_c1 = ConvBlock(512, self.clustering_num_list[1], has_relu=True)
         self.mic_2_l2norm = MICNormalize(2)
-        # self.mic_2_out_c = nn.Conv2d(self.clustering_num_list[1], 1, 3, padding=1)
-        # self.mic_2_up_16 = nn.Upsample(scale_factor=16, mode='bilinear')
 
         # MIC 3
         self.mic_3_pool = nn.MaxPool2d(2, 2, ceil_mode=True)
@@ -212,8 +207,7 @@ class BASNet(nn.Module):
         self.mic_3_b3 = ResBlock(512, 512)
         self.mic_3_c1 = ConvBlock(512, self.clustering_num_list[2], has_relu=True)
         self.mic_3_l2norm = MICNormalize(2)
-        # self.mic_3_out_c = nn.Conv2d(self.clustering_num_list[2], 1, 3, padding=1)
-        # self.mic_3_up_32 = nn.Upsample(scale_factor=32, mode='bilinear')
+
         pass
 
     def forward(self, x):
@@ -226,7 +220,10 @@ class BASNet(nn.Module):
 
         # -------------Decoder-------------
         # 1
-        mic_f_1 = e4
+        mic_f_1 = self.mic_1_b1(e4)
+        mic_f_1 = self.mic_1_b2(mic_f_1)
+        mic_f_1 = self.mic_1_b3(mic_f_1)
+
         mic_1 = self.mic_1_c1(mic_f_1)  # 512 * 28 * 28
         # mic_1_out = self.mic_1_out_c(mic_1)  # 1 * 28 * 28
         # mic_1_out_up = self.mic_1_up_8(mic_1_out)  # 1 * 224 * 224
@@ -313,7 +310,7 @@ class BASNet(nn.Module):
 
         return return_1, return_2, return_3
 
-    def salient_map_clustering(self, mic, which=1, has_mask=True):
+    def salient_map_clustering(self, mic, which=1, has_mask=False):
         # m1
         mic_gaussian = mic
         if has_mask:
@@ -384,7 +381,7 @@ class BASNet(nn.Module):
 class BASRunner(object):
 
     def __init__(self, epoch_num=100000, batch_size_train=8,
-                 clustering_num_1=64, clustering_num_2=96, clustering_num_3=128,
+                 clustering_num_1=128, clustering_num_2=256, clustering_num_3=512,
                  clustering_ratio_1=1, clustering_ratio_2=1.5, clustering_ratio_3=2,
                  data_dir='/mnt/4T/Data/SOD/DUTS/DUTS-TR', tra_image_dir='DUTS-TR-Image',
                  tra_label_dir='DUTS-TR-Mask', model_dir="./saved_models/my_train_mic_only"):
@@ -525,7 +522,7 @@ class BASRunner(object):
             # 2 保存模型
             if epoch % save_epoch_freq == 0:
                 save_file_name = Tools.new_dir(os.path.join(
-                    self.model_dir, "usod_{}_train_{:.3f}.pth".format(epoch, all_loss / len(self.dataloader_usod))))
+                    self.model_dir, "{}_train_{:.3f}.pth".format(epoch, all_loss / len(self.dataloader_usod))))
                 torch.save(self.net.state_dict(), save_file_name)
 
                 Tools.print()
@@ -549,7 +546,7 @@ if __name__ == '__main__':
 
     # bas_runner = BASRunner(batch_size_train=2, data_dir='D:\\data\\SOD\\DUTS\\DUTS-TR')
     # bas_runner = BASRunner(batch_size_train=12, model_dir="./saved_models/my_mic_123_mask")
-    bas_runner = BASRunner(batch_size_train=12, model_dir="./saved_models/my_mic_123_diff_automask_dataaug")
+    bas_runner = BASRunner(batch_size_train=12, model_dir="./saved_models/my_train5_diff_aug_mask")
     # bas_runner.load_model('./saved_models/my_train_mic_1/usod_5_train_4.661.pth')
     bas_runner.train()
     pass
