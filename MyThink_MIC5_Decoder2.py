@@ -6,7 +6,7 @@ from PIL import Image
 from skimage import io
 from alisuretool.Tools import Tools
 from torch.utils.data import DataLoader
-from MyTrain_MIC5_Decoder1 import BASNet, DatasetUSOD
+from MyTrain_MIC5_Decoder2 import BASNet, DatasetUSOD
 
 
 def one_5():
@@ -145,12 +145,12 @@ def one_fusion():
 
 def one_decoder():
     # --------- 1. get path ---------
-    has_mask = True
-    model_dir = './saved_models/my_train_mic5_decoder1_aug_mask/85_train_1.931.pth'
-    prediction_dir = Tools.new_dir('./test_data/my_train_mic5_decoder1_aug_mask_85_image_decoder2')
-    # has_mask = False
-    # model_dir = './saved_models/my_train_mic5_decoder1_aug_nomask/95_train_1.907.pth'
-    # prediction_dir = Tools.new_dir('./test_data/my_train_mic5_decoder1_aug_nomask_95_image_decoder2')
+    # has_mask = True
+    # model_dir = './saved_models/my_train_mic5_decoder2_aug_mask/110_train_1.886.pth'
+    # prediction_dir = Tools.new_dir('./test_data/my_train_mic5_decoder2_aug_mask_110_image_decoder')
+    has_mask = False
+    model_dir = './saved_models/my_train_mic5_decoder2_aug_nomask/110_train_1.762.pth'
+    prediction_dir = Tools.new_dir('./test_data/my_train_mic5_decoder2_aug_nomask_110_image_decoder')
 
     # --------- 2. data loader ---------
     image_dir = '/mnt/4T/Data/SOD/DUTS/DUTS-TR/DUTS-TR-Image/'
