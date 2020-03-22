@@ -6,7 +6,7 @@ from skimage import io
 from torchvision import transforms
 from alisuretool.Tools import Tools
 from torch.utils.data import DataLoader
-from MyTrain_MIC3 import BASNet, RescaleT, ToTensor, DatasetUSOD
+from src.MyTrain_MIC3 import BASNet, RescaleT, ToTensor, DatasetUSOD
 
 
 def one_5():

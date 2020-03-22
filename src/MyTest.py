@@ -3,12 +3,11 @@ import glob
 import torch
 from PIL import Image
 from skimage import io
-from BASNet import BASNet
 from torchvision import transforms
 from alisuretool.Tools import Tools
 from torch.autograd import Variable
 from torch.utils.data import DataLoader
-from BASData import RescaleT, ToTensor, SalObjDataset
+from src.MyTrain import BASNet, RescaleT, ToTensor, SalObjDataset
 
 
 def norm_PRED(d):
@@ -32,10 +31,9 @@ def save_output(image_name, predict, d_dir):
 if __name__ == '__main__':
 
     # --------- 1. get image path and name ---------
-    # model_dir = './saved_models/basnet_bsi/basnet.pth'
-    model_dir = './saved_models/basnet_bsi1/basnet_bsi_itr_155000_train_1.566_tar_0.104.pth'
+    model_dir = './saved_models/basnet_bce/basnet_600_train_3.308.pth'
     image_dir = './test_data/test_images/'
-    prediction_dir = Tools.new_dir('./test_data/test_results2/')
+    prediction_dir = Tools.new_dir('./test_data/test_results_basnet_bce3/')
     img_name_list = glob.glob(image_dir + '*.jpg')
 
     # --------- 2. dataloader ---------
@@ -58,7 +56,7 @@ if __name__ == '__main__':
         inputs_test = data_test['image'].type(torch.FloatTensor)
         inputs_test = Variable(inputs_test.cuda()) if torch.cuda.is_available() else Variable(inputs_test)
 
-        d1, d2, d3, d4, d5, d6, d7, d8 = net(inputs_test)
+        d1, d2, d3, d4, d5, d6, d7 = net(inputs_test)
 
         # normalization and save
         pred = norm_PRED(d1[:, 0, :, :])

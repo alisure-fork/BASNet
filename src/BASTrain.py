@@ -2,14 +2,14 @@ import os
 import glob
 import torch
 import torch.nn as nn
-from BASSsim import SSIM
-from BASNet import BASNet
+from src.BASSsim import SSIM
+from src.BASNet import BASNet
 import torch.optim as optim
 from torchvision import transforms
 from alisuretool.Tools import Tools
 from torch.autograd import Variable
 from torch.utils.data import DataLoader
-from BASData import RescaleT, RandomCrop, ToTensor, SalObjDataset
+from src.BASData import RescaleT, RandomCrop, ToTensor, SalObjDataset
 
 
 class IOU(torch.nn.Module):

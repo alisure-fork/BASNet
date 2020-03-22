@@ -5,16 +5,14 @@ from PIL import Image
 from skimage import io
 from alisuretool.Tools import Tools
 from torch.utils.data import DataLoader
-from MyTrain_MIC5 import BASNet, DatasetUSOD
+from src.MyTrain_MIC4 import BASNet, DatasetUSOD
 
 
 def one_5():
 
     # --------- 1. get path ---------
-    # model_dir = './saved_models/my_train5_diff_aug_mask/125_train_6.569.pth'
-    # prediction_dir = Tools.new_dir('./test_data/my_train5_diff_aug_mask_125_image')
-    model_dir = './saved_models/my_train5_diff_aug_nomask/125_train_6.044.pth'
-    prediction_dir = Tools.new_dir('./test_data/my_train5_diff_aug_nomask_125_image')
+    model_dir = './saved_models/my_mic_123_diff_automask_dataaug/usod_180_train_4.815.pth'
+    prediction_dir = Tools.new_dir('./test_data/my_mic_123_diff_automask_dataaug_180_image')
 
     # --------- 2. data loader ---------
     image_dir = '/mnt/4T/Data/SOD/DUTS/DUTS-TR/DUTS-TR-Image/'
@@ -24,7 +22,7 @@ def one_5():
 
     # --------- 3. model define ---------
     Tools.print("...load BASNet...")
-    net = BASNet(3, clustering_num_list=[128, 256, 512], pretrained=False)
+    net = BASNet(3, clustering_num_list=[64, 96, 128], pretrained=False)
     if torch.cuda.is_available():
         net.cuda()
     net.load_state_dict(torch.load(model_dir))
@@ -68,10 +66,8 @@ def one_5():
 
 def one_1_3():
     # --------- 1. get path ---------
-    # model_dir = './saved_models/my_train5_diff_aug_mask/125_train_6.569.pth'
-    # prediction_dir = Tools.new_dir('./test_data/my_train5_diff_aug_mask_125_image2')
-    model_dir = './saved_models/my_train5_diff_aug_nomask/125_train_6.044.pth'
-    prediction_dir = Tools.new_dir('./test_data/my_train5_diff_aug_nomask_125_image2')
+    model_dir = './saved_models/my_mic_123_diff_automask_dataaug/usod_180_train_4.815.pth'
+    prediction_dir = Tools.new_dir('./test_data/my_mic_123_diff_automask_dataaug_180_image2')
 
     # --------- 2. data loader ---------
     image_dir = '/mnt/4T/Data/SOD/DUTS/DUTS-TR/DUTS-TR-Image/'
@@ -81,7 +77,7 @@ def one_1_3():
 
     # --------- 3. model define ---------
     Tools.print("...load BASNet...")
-    net = BASNet(3, clustering_num_list=[128, 256, 512], pretrained=False)
+    net = BASNet(3, clustering_num_list=[64, 96, 128], pretrained=False)
     if torch.cuda.is_available():
         net.cuda()
     net.load_state_dict(torch.load(model_dir))
@@ -124,7 +120,7 @@ def one_1_3():
 
 if __name__ == '__main__':
 
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
-    one_5()
+    one_1_3()
     pass
