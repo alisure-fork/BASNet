@@ -6,14 +6,14 @@ from PIL import Image
 from skimage import io
 from alisuretool.Tools import Tools
 from torch.utils.data import DataLoader
-from MyTrain_MIC5_Decoder5_MSE1 import BASNet, DatasetUSOD
+from MyTrain_MIC5_Decoder5 import BASNet, DatasetUSOD
 
 
 def one_decoder():
     # --------- 1. get path ---------
     has_mask = True
-    model_dir = './saved_models/my_train_mic5_decoder5_mse1_small/115_train_1.689.pth'
-    prediction_dir = Tools.new_dir('./test_data/my_train_mic5_decoder5_mse1_small_115_image_decoder')
+    model_dir = './saved_models/my_train_mic5_decoder5_aug_mask_1_small/125_train_1.699.pth'
+    prediction_dir = Tools.new_dir('./test_data/my_train_mic5_decoder5_aug_mask_1_small_125_image_decoder')
 
     # --------- 2. data loader ---------
     image_dir = '/mnt/4T/Data/SOD/DUTS/DUTS-TR/DUTS-TR-Image/'
@@ -77,7 +77,7 @@ def one_decoder():
 
         # 4
         label = return_d["label"].squeeze().cpu().data.numpy()
-        im_label = Image.fromarray(label * 255).convert('RGB')
+        im_label = Image.fromarray((np.asarray(label, dtype=np.uint8) + 1) * 127).convert('RGB')
         imo_label = im_label.resize((im_data.shape[1], im_data.shape[0]), resample=Image.BILINEAR)
         imo_label.save(os.path.join(result_path, '{}_{}_{}.png'.format(
             os.path.splitext(os.path.basename(img_name))[0], "l", smc_result)))
@@ -96,7 +96,7 @@ def one_decoder():
 
 if __name__ == '__main__':
 
-    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
     one_decoder()
     pass
