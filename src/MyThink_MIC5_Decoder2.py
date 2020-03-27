@@ -6,7 +6,7 @@ from PIL import Image
 from skimage import io
 from alisuretool.Tools import Tools
 from torch.utils.data import DataLoader
-from MyTrain_MIC5_Decoder3 import BASNet, DatasetUSOD
+from src.MyTrain_MIC5_Decoder2 import BASNet, DatasetUSOD
 
 
 def one_5():
@@ -149,10 +149,8 @@ def one_decoder():
     # model_dir = './saved_models/my_train_mic5_decoder2_aug_mask/110_train_1.886.pth'
     # prediction_dir = Tools.new_dir('./test_data/my_train_mic5_decoder2_aug_mask_110_image_decoder')
     has_mask = False
-    model_dir = './saved_models/my_train_mic5_decoder3_aug_nomask/90_train_1.681.pth'
-    prediction_dir = Tools.new_dir('./test_data/my_train_mic5_decoder3_aug_nomask_90_image_decoder')
-    # model_dir = './saved_models/my_train_mic5_decoder3_aug_nomask_cam2/90_train_2.018.pth'
-    # prediction_dir = Tools.new_dir('./test_data/my_train_mic5_decoder3_aug_nomask_cam2_90_image_decoder')
+    model_dir = './saved_models/my_train_mic5_decoder2_aug_nomask/110_train_1.762.pth'
+    prediction_dir = Tools.new_dir('./test_data/my_train_mic5_decoder2_aug_nomask_110_image_decoder')
 
     # --------- 2. data loader ---------
     image_dir = '/mnt/4T/Data/SOD/DUTS/DUTS-TR/DUTS-TR-Image/'
@@ -235,7 +233,7 @@ def one_decoder():
 
 if __name__ == '__main__':
 
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
     one_decoder()
     pass
