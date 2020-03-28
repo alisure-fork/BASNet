@@ -4,6 +4,7 @@ import torch
 import numpy as np
 import torch.nn as nn
 from PIL import Image
+from skimage import io
 import torch.optim as optim
 from torchvision import models
 import torch.nn.functional as F
@@ -18,8 +19,6 @@ from torch.utils.data import DataLoader, Dataset
 class DatasetUSOD(Dataset):
 
     def __init__(self, img_name_list, is_train=True):
-        # self.image_name_list = img_name_list[:20]
-        # self.label_name_list = lbl_name_list[:20]
         self.image_name_list = img_name_list
 
         self.is_train = is_train
@@ -44,6 +43,64 @@ class DatasetUSOD(Dataset):
         image = Image.open(self.image_name_list[idx]).convert("RGB")
         image = self.transform_train(image) if self.is_train else self.transform_test(image)
         return image, idx
+
+    pass
+
+
+class DatasetEvalUSOD(Dataset):
+
+    def __init__(self, img_name_list, lab_name_list, small_data=1):
+        self.small_data = small_data
+        self.image_name_list = np.asarray(img_name_list)
+        self.label_name_list = np.asarray(lab_name_list)
+        if self.small_data > 1:
+            index = np.arange(len(self.image_name_list))
+            np.random.shuffle(index)
+            index = index[0: int(len(self.image_name_list) / small_data)]
+            self.image_name_list = self.image_name_list[index]
+            self.label_name_list = self.label_name_list[index]
+            pass
+
+        self.transform_test = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+        ])
+        pass
+
+    def __len__(self):
+        return len(self.image_name_list)
+
+    def __getitem__(self, idx):
+        image = Image.open(self.image_name_list[idx]).convert("RGB")
+        image = self.transform_test(image)
+
+        label_shape = [image.shape[0], image.shape[1], 1]
+        if 0 == len(self.label_name_list):
+            label = np.zeros(label_shape)
+        else:
+            label = io.imread(self.label_name_list[idx])
+            if 3 == len(label.shape):
+                label = label[:, :, 0]
+                pass
+            label = label[:, :, np.newaxis]
+            pass
+
+        return image, label
+
+    @staticmethod
+    def eval_mae(y_pred, y):
+        return np.abs(y_pred - y).mean()
+
+    @staticmethod
+    def eval_pr(y_pred, y, th_num):
+        prec, recall = np.zeros(shape=(th_num,)), np.zeros(shape=(th_num,))
+        th_list = np.linspace(0, 1 - 1e-10, th_num)
+        for i in range(th_num):
+            y_temp = y_pred >= th_list[i]
+            tp = (y_temp * y).sum()
+            prec[i], recall[i] = tp / (y_temp.sum() + 1e-20), tp / y.sum()
+            pass
+        return prec, recall
 
     pass
 
@@ -522,7 +579,7 @@ class BASRunner(object):
         loss_all = (loss_mic_1 + loss_mic_2 + loss_mic_3) / 3 + 5 * (loss_bce_1 + loss_bce_2 + loss_bce_3)
         return loss_all, [loss_mic_1, loss_mic_2, loss_mic_3], [loss_bce_1, loss_bce_2, loss_bce_3]
 
-    def train(self, save_epoch_freq=5, print_ite_num=100, update_epoch_freq=1):
+    def train(self, save_epoch_freq=5, eval_epoch_freq=5, print_ite_num=100, update_epoch_freq=1):
 
         for epoch in range(0, self.epoch_num):
 
@@ -609,7 +666,14 @@ class BASRunner(object):
                 pass
 
             ###########################################################################
-            # 2 保存模型
+            # 2 测试模型
+            if epoch % eval_epoch_freq == 0:
+                self.eval(self.net, epoch=epoch, is_test=False, small_data=20)
+                self.eval(self.net, epoch=epoch, is_test=True, small_data=10)
+                pass
+
+            ###########################################################################
+            # 3 保存模型
             if epoch % save_epoch_freq == 0:
                 save_file_name = Tools.new_dir(os.path.join(
                     self.model_dir, "{}_train_{:.3f}.pth".format(epoch, all_loss / len(self.dataloader_usod))))
@@ -624,6 +688,73 @@ class BASRunner(object):
 
         pass
 
+    @staticmethod
+    def eval(net, epoch=0, is_test=True, small_data=5, print_ite_num=100, th_num=100, beta_2=0.3):
+        which = "TE" if is_test else "TR"
+        data_dir = '/mnt/4T/Data/SOD/DUTS/DUTS-{}'.format(which)
+        image_dir, label_dir = 'DUTS-{}-Image'.format(which), 'DUTS-{}-Mask'.format(which)
+
+        # 数据
+        img_name_list = glob.glob(os.path.join(data_dir, image_dir, '*.jpg'))
+        lbl_name_list = [os.path.join(data_dir, label_dir, '{}.png'.format(
+            os.path.splitext(os.path.basename(img_path))[0])) for img_path in img_name_list]
+        dataset_eval_usod = DatasetEvalUSOD(img_name_list=img_name_list,
+                                            lab_name_list=lbl_name_list, small_data=small_data)
+        dataloader_eval_usod = DataLoader(dataset_eval_usod, 1, shuffle=False, num_workers=8)
+
+        # 执行
+        d_m = ["d1", "d2", "d3"]
+        avg_mae = [0.0] * len(d_m)
+        avg_prec = np.zeros(shape=(len(d_m), th_num)) + 1e-6
+        avg_recall = np.zeros(shape=(len(d_m), th_num)) + 1e-6
+        net.eval()
+        for i, (inputs, labels) in enumerate(dataloader_eval_usod):
+            inputs = inputs.type(torch.FloatTensor)
+            inputs = inputs.cuda() if torch.cuda.is_available() else inputs
+
+            now_label = labels.squeeze().data.numpy() / 255
+            return_m, return_d = net(inputs)
+
+            mae_list = [0.0] * len(d_m)
+            for index, key in enumerate(d_m):
+                d_out = return_d[key]["out_up_sigmoid"].squeeze().cpu().data.numpy()
+                now_pred = np.asarray(Image.fromarray(d_out * 255).resize(
+                    (now_label.shape[1], now_label.shape[0]), resample=Image.BILINEAR)) / 255
+
+                mae = dataset_eval_usod.eval_mae(now_pred, now_label)
+                prec, recall = dataset_eval_usod.eval_pr(now_pred, now_label, th_num)
+
+                mae_list[index] = mae
+                avg_mae[index] += mae
+                avg_prec[index] += prec
+                avg_recall[index] += recall
+                pass
+
+            if i % print_ite_num == 0:
+                now = ""
+                for index, key in enumerate(d_m):
+                    now += "{}:{:.2f}/{:.2f} ".format(key, avg_mae[index] / (i + 1), mae_list[index])
+                    pass
+                Tools.print("{} [E:{:4d}, b:{:4d}/{:4d}] {}".format("Test" if is_test else "Train",
+                                                                    epoch, i, len(dataloader_eval_usod), now))
+                pass
+
+            pass
+
+        # 结果
+        score = np.zeros(shape=(len(d_m), th_num))
+        for index, key in enumerate(d_m):
+            avg_mae[index] = avg_mae[index] / len(dataloader_eval_usod)
+            avg_prec[index] = avg_prec[index] / len(dataloader_eval_usod)
+            avg_recall[index] = avg_recall[index] / len(dataloader_eval_usod)
+            score[index] = (1+beta_2)*avg_prec[index]*avg_recall[index]/(beta_2*avg_prec[index]+avg_recall[index])
+            score[index][score[index] != score[index]] = 0
+            Tools.print("{} {} {} {} {}".format("Test" if is_test else "Train", epoch,
+                                                key, avg_mae[index], score[index].max()))
+            pass
+
+        pass
+
     pass
 
 
@@ -632,7 +763,7 @@ class BASRunner(object):
 
 
 if __name__ == '__main__':
-    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
     bas_runner = BASRunner(batch_size_train=8, has_mask=True, more_obj=False,
                            model_dir="./saved_models/my_train_mic5_decoder9_aug_mask_norm_5bce_dall_label55")
