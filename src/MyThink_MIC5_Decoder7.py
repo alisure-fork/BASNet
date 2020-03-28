@@ -6,17 +6,17 @@ from PIL import Image
 from skimage import io
 from alisuretool.Tools import Tools
 from torch.utils.data import DataLoader
-from MyTrain_MIC5_Decoder9 import BASNet, DatasetUSOD
+from src.MyTrain_MIC5_Decoder7 import BASNet, DatasetUSOD
 
 
 def one_decoder():
     # --------- 1. get path ---------
     has_mask = True
     more_obj = False
-    # model_dir = './saved_models/my_train_mic5_decoder9_aug_mask_norm_5bce_dall_label64/100_train_7.167.pth'
-    # prediction_dir = Tools.new_dir('./test_data/my_train_mic5_decoder9_aug_mask_norm_5bce_dall_label64_100_image_decoder')
-    model_dir = './saved_models/my_train_mic5_decoder9_aug_mask_norm_5bce_dall_label73/105_train_6.192.pth'
-    prediction_dir = Tools.new_dir('./test_data/my_train_mic5_decoder9_aug_mask_norm_5bce_dall_label73_105_image_decoder')
+    # model_dir = './saved_models/my_train_mic5_decoder7_aug_mask_norm_5bce_d4/70_train_3.266.pth'
+    # prediction_dir = Tools.new_dir('./test_data/my_train_mic5_decoder7_aug_mask_norm_5bce_d4_70_image_decoder')
+    model_dir = './saved_models/my_train_mic5_decoder7_aug_mask_norm_5bce_d5/65_train_3.343.pth'
+    prediction_dir = Tools.new_dir('./test_data/my_train_mic5_decoder7_aug_mask_norm_5bce_d5_65_image_decoder')
 
     # --------- 2. data loader ---------
     image_dir = '/mnt/4T/Data/SOD/DUTS/DUTS-TR/DUTS-TR-Image/'
@@ -86,7 +86,7 @@ def one_decoder():
             os.path.splitext(os.path.basename(img_name))[0], "l", smc_result)))
 
         # 5
-        for key in ["d1", "d2", "d3"]:
+        for key in ["d1", "d2", "d3", "d4", "d5"]:
             d_out_up_sigmoid = return_d[key]["out_up_sigmoid"].squeeze().cpu().data.numpy()
             im_d_out_up_sigmoid = Image.fromarray(d_out_up_sigmoid * 255).convert('RGB')
             imo_d_out_up_sigmoid = im_d_out_up_sigmoid.resize((im_data.shape[1], im_data.shape[0]),
@@ -102,7 +102,7 @@ def one_decoder():
 
 if __name__ == '__main__':
 
-    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
     one_decoder()
     pass
