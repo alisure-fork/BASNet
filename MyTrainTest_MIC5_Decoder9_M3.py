@@ -169,8 +169,9 @@ class MICProduceClass(object):
 
 class BASNet(nn.Module):
 
-    def __init__(self, n_channels, clustering_num_list=None):
+    def __init__(self, n_channels, clustering_num_list=None, has_mask=True):
         super(BASNet, self).__init__()
+        self.has_mask = has_mask  # 28
         resnet = models.resnet18(pretrained=False)
 
         # -------------Encoder--------------
@@ -179,26 +180,29 @@ class BASNet(nn.Module):
         self.encoder2 = resnet.layer2  # 128 * 112 * 112
         self.encoder3 = resnet.layer3  # 256 * 56 * 56
         self.encoder4 = resnet.layer4  # 512 * 28 * 28
-        self.encoder5_pool = nn.MaxPool2d(2, 2, ceil_mode=True)
-        self.encoder5_b1 = ResBlock(512, 512)
-        self.encoder5_b2 = ResBlock(512, 512)
-        self.encoder5_b3 = ResBlock(512, 512)  # 512 * 14 * 14
+        self.encoder4_pool = nn.MaxPool2d(2, 2, ceil_mode=True)
 
         # -------------MIC-------------
         self.clustering_num_list = list([128, 256, 512]) if clustering_num_list is None else clustering_num_list
 
         # MIC 1
-        self.mic_1_b1 = ResBlock(256, 256)  # 56
-        self.mic_1_c1 = ConvBlock(256, self.clustering_num_list[0], has_relu=True)
+        self.mic_1_b1 = ResBlock(512, 512)  # 14
+        self.mic_1_b2 = ResBlock(512, 512)
+        self.mic_1_b3 = ResBlock(512, 512)
+        self.mic_1_c1 = ConvBlock(512, self.clustering_num_list[0], has_relu=True)
         self.mic_1_l2norm = MICNormalize(2)
 
         # MIC 2
-        self.mic_2_b1 = ResBlock(512, 512)  # 28
+        self.mic_2_b1 = ResBlock(512, 512)  # 14
+        self.mic_2_b2 = ResBlock(512, 512)
+        self.mic_2_b3 = ResBlock(512, 512)
         self.mic_2_c1 = ConvBlock(512, self.clustering_num_list[1], has_relu=True)
         self.mic_2_l2norm = MICNormalize(2)
 
         # MIC 3
         self.mic_3_b1 = ResBlock(512, 512)  # 14
+        self.mic_3_b2 = ResBlock(512, 512)
+        self.mic_3_b3 = ResBlock(512, 512)
         self.mic_3_c1 = ConvBlock(512, self.clustering_num_list[2], has_relu=True)
         self.mic_3_l2norm = MICNormalize(2)
         pass
@@ -212,27 +216,27 @@ class BASNet(nn.Module):
         e2 = self.encoder2(e1)  # 128 * 112 * 112
         e3 = self.encoder3(e2)  # 256 * 56 * 56
         e4 = self.encoder4(e3)  # 512 * 28 * 28
-        e5 = self.encoder5_b3(self.encoder5_b2(self.encoder5_b1(self.encoder5_pool(e4))))  # 512 * 14 * 14
+        e4 = self.encoder4_pool(e4)  # 512 * 14 * 14
 
         # -------------MIC-------------
         # 1
-        mic_f_1 = self.mic_1_b1(e3)  # 256 * 56 * 56
-        mic_1 = self.mic_1_c1(mic_f_1)  # 128 * 56 * 56
-        smc_logits_1, smc_l2norm_1, smc_sigmoid_1 = self.salient_map_clustering(mic_1)
+        mic_f_1 = self.mic_1_b3(self.mic_1_b2(self.mic_1_b1(e4)))  # 512 * 14 * 14
+        mic_1 = self.mic_1_c1(mic_f_1)  # 128 * 14 * 14
+        smc_logits_1, smc_l2norm_1, smc_sigmoid_1 = self.salient_map_clustering(mic_1, has_mask=self.has_mask)
         cam_1 = self.cluster_activation_map(smc_logits_1, mic_1)  # 簇激活图：Cluster Activation Map
         return_m1 = {"smc_logits": smc_logits_1, "smc_l2norm": smc_l2norm_1, "smc_sigmoid": smc_sigmoid_1, "cam": cam_1}
 
         # 2
-        mic_f_2 = self.mic_2_b1(e4)  # 512 * 28 * 28
-        mic_2 = self.mic_2_c1(mic_f_2)  # 256 * 28 * 28
-        smc_logits_2, smc_l2norm_2, smc_sigmoid_2 = self.salient_map_clustering(mic_2)
+        mic_f_2 = self.mic_2_b3(self.mic_2_b2(self.mic_2_b1(mic_f_1)))  # 512 * 14 * 14
+        mic_2 = self.mic_2_c1(mic_f_2)  # 256 * 14 * 14
+        smc_logits_2, smc_l2norm_2, smc_sigmoid_2 = self.salient_map_clustering(mic_2, has_mask=self.has_mask)
         cam_2 = self.cluster_activation_map(smc_logits_2, mic_2)  # 簇激活图：Cluster Activation Map
         return_m2 = {"smc_logits": smc_logits_2, "smc_l2norm": smc_l2norm_2, "smc_sigmoid": smc_sigmoid_2, "cam": cam_2}
 
         # 3
-        mic_f_3 = self.mic_3_b1(e5)  # 512 * 14 * 14
+        mic_f_3 = self.mic_3_b3(self.mic_3_b2(self.mic_3_b1(mic_f_2)))  # 512 * 14 * 14
         mic_3 = self.mic_3_c1(mic_f_3)  # 512 * 14 * 14
-        smc_logits_3, smc_l2norm_3, smc_sigmoid_3 = self.salient_map_clustering(mic_3)
+        smc_logits_3, smc_l2norm_3, smc_sigmoid_3 = self.salient_map_clustering(mic_3, has_mask=self.has_mask)
         cam_3 = self.cluster_activation_map(smc_logits_3, mic_3)  # 簇激活图：Cluster Activation Map
         return_m3 = {"smc_logits": smc_logits_3, "smc_l2norm": smc_l2norm_3, "smc_sigmoid": smc_sigmoid_3, "cam": cam_3}
 
@@ -241,10 +245,10 @@ class BASNet(nn.Module):
         cam_norm_2_up = self._up_to_target(cam_2, cam_norm_1_up)
         cam_norm_3_up = self._up_to_target(cam_3, cam_norm_1_up)
         cam_norm_up = (cam_norm_1_up + cam_norm_2_up + cam_norm_3_up) / 2
-        label = self.salient_map_divide(cam_norm_up, obj_th=0.8, bg_th=0.2)
+        # label = self.salient_map_divide(cam_norm_up, obj_th=0.8, bg_th=0.2)
         label = self.salient_map_divide(cam_norm_up, obj_th=0.7, bg_th=0.3)
-        label = self.salient_map_divide(cam_norm_up, obj_th=0.6, bg_th=0.4)
-        label = self.salient_map_divide(cam_norm_up, obj_th=0.5, bg_th=0.5)
+        # label = self.salient_map_divide(cam_norm_up, obj_th=0.6, bg_th=0.4)
+        # label = self.salient_map_divide(cam_norm_up, obj_th=0.5, bg_th=0.5)
         return_l = {"label": label,  "cam_norm_up": cam_norm_up, "cam_norm_1_up": cam_norm_1_up,
                     "cam_norm_2_up": cam_norm_2_up, "cam_norm_3_up": cam_norm_3_up}
         # -------------Label-------------
@@ -253,7 +257,12 @@ class BASNet(nn.Module):
         # return_m = {"m1": return_m1, "m2": return_m2, "m3": return_m3}
         return return_m
 
-    def salient_map_clustering(self, mic):
+    def salient_map_clustering(self, mic, has_mask=False):
+        if has_mask:
+            g_mask = self._mask_gaussian([mic.size()[2], mic.size()[3]], sigma=mic.size()[2] * mic.size()[3])
+            mic = mic * torch.tensor(g_mask).cuda()
+            pass
+
         smc_logits = F.adaptive_avg_pool2d(mic, 1).view((mic.size()[0], -1))  # 512
         smc_l2norm = self.mic_1_l2norm(smc_logits)
         smc_sigmoid = torch.sigmoid(smc_logits)
@@ -283,6 +292,23 @@ class BASNet(nn.Module):
         return norm.view(feature_shape)
 
     @staticmethod
+    def _mask_gaussian(image_size, where=None, sigma=20):
+
+        x = np.arange(0, image_size[1], 1, float)
+        y = np.arange(0, image_size[0], 1, float)
+        y = y[:, np.newaxis]
+
+        if where:
+            x0, y0 = where[1], where[0]
+        else:
+            x0, y0 = image_size[1] // 2, image_size[0] // 2
+            pass
+
+        # 生成高斯掩码
+        mask = np.exp(-4 * np.log(2) * ((x - x0) ** 2 + (y - y0) ** 2) / sigma).astype(np.float32)
+        return mask
+
+    @staticmethod
     def _up_to_target(source, target):
         if source.size()[2] != target.size()[2] or source.size()[3] != target.size()[3]:
             source = torch.nn.functional.interpolate(
@@ -299,13 +325,14 @@ class BASNet(nn.Module):
 
 class BASRunner(object):
 
-    def __init__(self, epoch_num=1000, batch_size_train=8,
+    def __init__(self, epoch_num=1000, batch_size_train=8, has_mask=True,
                  clustering_num_1=128, clustering_num_2=256, clustering_num_3=512,
-                 clustering_ratio_1=1, clustering_ratio_2=1.5, clustering_ratio_3=2,
+                 clustering_ratio_1=2, clustering_ratio_2=3, clustering_ratio_3=4,
                  data_dir='/mnt/4T/Data/SOD/DUTS/DUTS-TR', tra_image_dir='DUTS-TR-Image',
                  tra_label_dir='DUTS-TR-Mask', model_dir="./saved_models/my_train_mic_only"):
         self.epoch_num = epoch_num
         self.batch_size_train = batch_size_train
+        self.has_mask = has_mask
 
         # Dataset
         self.model_dir = model_dir
@@ -317,7 +344,8 @@ class BASRunner(object):
         self.dataloader_usod = DataLoader(self.dataset_usod, self.batch_size_train, shuffle=True, num_workers=8)
 
         # Model
-        self.net = BASNet(3, clustering_num_list=[clustering_num_1, clustering_num_2, clustering_num_3])
+        self.net = BASNet(3, clustering_num_list=[clustering_num_1, clustering_num_2, clustering_num_3],
+                          has_mask=self.has_mask)
         self.net = self.net.cuda() if torch.cuda.is_available() else self.net
 
         # MIC
@@ -458,9 +486,16 @@ class BASRunner(object):
 
 
 if __name__ == '__main__':
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+    #
+    # bas_runner = BASRunner(batch_size_train=8, has_mask=True,
+    #                        model_dir="./saved_models/mtt_mic5_decoder9_m2_mic_only_mask")
+    # # bas_runner.load_model('./saved_models/my_train5_diff_aug_mask/125_train_6.569.pth')
+    # bas_runner.train()
     os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
-    bas_runner = BASRunner(batch_size_train=8, model_dir="./saved_models/mtt_mic5_decoder9_m0_mic_only")
+    bas_runner = BASRunner(batch_size_train=8, has_mask=False,
+                           model_dir="./saved_models/mtt_mic5_decoder9_m2_mic_only_nomask")
     # bas_runner.load_model('./saved_models/my_train5_diff_aug_mask/125_train_6.569.pth')
     bas_runner.train()
     pass

@@ -11,8 +11,8 @@ from MyTrainTest_MIC5_Decoder9_M1 import BASNet, DatasetUSOD
 
 def visualization():
     # --------- 1. get path ---------
-    model_dir = './saved_models/mtt_mic5_decoder9_m1_label64_mic_no_only/105_train_6.192.pth'
-    prediction_dir = Tools.new_dir('./test_data/mtt_mic5_decoder9_m1_label64_mic_no_only/105')
+    model_dir = './saved_models/mtt_mic5_decoder9_m1_label64_mic_no_only/420_train_12.023.pth'
+    prediction_dir = Tools.new_dir('./test_data/mtt_mic5_decoder9_m1_label64_mic_no_only/420')
 
     # --------- 2. data loader ---------
     image_dir = '/mnt/4T/Data/SOD/DUTS/DUTS-TR/DUTS-TR-Image/'
@@ -99,7 +99,7 @@ def visualization():
 
 if __name__ == '__main__':
 
-    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
     visualization()
     pass

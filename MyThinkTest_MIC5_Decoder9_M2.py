@@ -6,13 +6,20 @@ from PIL import Image
 from skimage import io
 from alisuretool.Tools import Tools
 from torch.utils.data import DataLoader
-from MyTrainTest_MIC5_Decoder9_M0 import BASNet, DatasetUSOD
+from MyTrainTest_MIC5_Decoder9_M2 import BASNet, DatasetUSOD
 
 
 def visualization():
     # --------- 1. get path ---------
-    model_dir = './saved_models/mtt_mic5_decoder9_m0_mic_only/600_train_4.709.pth'
-    prediction_dir = Tools.new_dir('./test_data/mtt_mic5_decoder9_m0_mic_only/600')
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+    # has_mask = True
+    # model_dir = './saved_models/mtt_mic5_decoder9_m2_mic_only_mask/320_train_4.469.pth'
+    # prediction_dir = Tools.new_dir('./test_data/mtt_mic5_decoder9_m2_mic_only_mask/320')
+
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+    has_mask = False
+    model_dir = './saved_models/mtt_mic5_decoder9_m2_mic_only_nomask/320_train_4.395.pth'
+    prediction_dir = Tools.new_dir('./test_data/mtt_mic5_decoder9_m2_mic_only_nomask/320')
 
     # --------- 2. data loader ---------
     image_dir = '/mnt/4T/Data/SOD/DUTS/DUTS-TR/DUTS-TR-Image/'
@@ -22,7 +29,7 @@ def visualization():
 
     # --------- 3. model define ---------
     Tools.print("...load BASNet...")
-    net = BASNet(3, clustering_num_list=[128, 256, 512])
+    net = BASNet(3, clustering_num_list=[128, 256, 512], has_mask=has_mask)
     if torch.cuda.is_available():
         net.cuda()
     net.load_state_dict(torch.load(model_dir), strict=False)
@@ -87,8 +94,6 @@ def visualization():
 
 
 if __name__ == '__main__':
-
-    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
     visualization()
     pass
