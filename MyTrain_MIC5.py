@@ -2,15 +2,17 @@ import os
 import glob
 import torch
 import numpy as np
+from tqdm import tqdm
 import torch.nn as nn
 from PIL import Image
 import torch.optim as optim
 from torchvision import models
 import torch.nn.functional as F
-from skimage import io, transform
 from torchvision import transforms
 from alisuretool.Tools import Tools
+import torch.backends.cudnn as cudnn
 from torch.utils.data import DataLoader, Dataset
+from torchvision.models.resnet import BasicBlock as ResBlock
 
 
 #######################################################################################################################
@@ -51,41 +53,6 @@ class DatasetUSOD(Dataset):
 
 #######################################################################################################################
 # 2 Model
-
-
-class ResBlock(nn.Module):
-    expansion = 1
-
-    def __init__(self, inplanes, planes, stride=1, downsample=None):
-        super(ResBlock, self).__init__()
-        self.conv1 = nn.Conv2d(inplanes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(planes)
-        self.relu = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv2d(inplanes, planes, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn2 = nn.BatchNorm2d(planes)
-        self.downsample = downsample
-        self.stride = stride
-        pass
-
-    def forward(self, x):
-        residual = x
-
-        out = self.conv1(x)
-        out = self.bn1(out)
-        out = self.relu(out)
-
-        out = self.conv2(out)
-        out = self.bn2(out)
-
-        if self.downsample is not None:
-            residual = self.downsample(x)
-
-        out += residual
-        out = self.relu(out)
-
-        return out
-
-    pass
 
 
 class ConvBlock(nn.Module):
@@ -137,6 +104,15 @@ class MICProduceClass(object):
         self.classes = np.zeros(shape=(self.n_sample, ), dtype=np.int)
         pass
 
+    def init(self):
+        class_per_name = self.n_sample // self.out_dim
+        self.class_num += class_per_name
+        for i in range(self.out_dim):
+            self.classes[i * class_per_name: (i + 1) * class_per_name] = i
+            pass
+        np.random.shuffle(self.classes)
+        pass
+
     def reset(self):
         self.count = 0
         self.count_2 = 0
@@ -171,9 +147,9 @@ class MICProduceClass(object):
 
 class BASNet(nn.Module):
 
-    def __init__(self, n_channels, clustering_num_list=None, pretrained=True):
+    def __init__(self, n_channels, clustering_num_list=None):
         super(BASNet, self).__init__()
-        resnet = models.resnet18(pretrained=pretrained)
+        resnet = models.resnet18(pretrained=False)
 
         # -------------Encoder--------------
         self.encoder0 = ConvBlock(n_channels, 64, has_relu=True)
@@ -207,7 +183,6 @@ class BASNet(nn.Module):
         self.mic_3_b3 = ResBlock(512, 512)
         self.mic_3_c1 = ConvBlock(512, self.clustering_num_list[2], has_relu=True)
         self.mic_3_l2norm = MICNormalize(2)
-
         pass
 
     def forward(self, x):
@@ -223,29 +198,15 @@ class BASNet(nn.Module):
         mic_f_1 = self.mic_1_b1(e4)
         mic_f_1 = self.mic_1_b2(mic_f_1)
         mic_f_1 = self.mic_1_b3(mic_f_1)
-
         mic_1 = self.mic_1_c1(mic_f_1)  # 512 * 28 * 28
-        # mic_1_out = self.mic_1_out_c(mic_1)  # 1 * 28 * 28
-        # mic_1_out_up = self.mic_1_up_8(mic_1_out)  # 1 * 224 * 224
-        # mic_1_out_sigmoid = torch.sigmoid(mic_1_out)  # 1 * 28 * 28  # 小输出
-        # mic_1_out_up_sigmoid = torch.sigmoid(mic_1_out_up)  # 1 * 224 * 224  # 大输出
-
-        smc_logits_1, smc_l2norm_1, smc_sigmoid_1 = self.salient_map_clustering(mic_1, which=1)
-        # cam_1 = self.cluster_activation_map(smc_logits_1, mic_1)  # 簇激活图：Cluster Activation Map
-        # sme_1 = self.salient_map_divide(cam_1)  # 显著图划分：Salient Map Divide
+        smc_logits_1, smc_l2norm_1, smc_sigmoid_1 = self.salient_map_clustering(mic_1)
 
         return_1 = {
             "mic_f": mic_f_1,
             "mic": mic_1,
-            # "mic_out": mic_1_out,
-            # "mic_out_up": mic_1_out_up,
-            # "mic_out_sigmoid": mic_1_out_sigmoid,
-            # "mic_out_up_sigmoid": mic_1_out_up_sigmoid,
             "smc_logits": smc_logits_1,
             "smc_l2norm": smc_l2norm_1,
             "smc_sigmoid": smc_sigmoid_1,
-            # "cam": cam_1,
-            # "sme": sme_1
         }
 
         # 2
@@ -253,29 +214,15 @@ class BASNet(nn.Module):
         mic_f_2 = self.mic_2_b1(mic_f_2)
         mic_f_2 = self.mic_2_b2(mic_f_2)
         mic_f_2 = self.mic_2_b3(mic_f_2)
-
         mic_2 = self.mic_2_c1(mic_f_2)  # 512 * 14 * 14
-        # mic_2_out = self.mic_2_out_c(mic_2)  # 1 * 14 * 14
-        # mic_2_out_up = self.mic_2_up_16(mic_2_out)  # 1 * 224 * 224
-        # mic_2_out_sigmoid = torch.sigmoid(mic_2_out)  # 1 * 14 * 14  # 小输出
-        # mic_2_out_up_sigmoid = torch.sigmoid(mic_2_out_up)  # 1 * 224 * 224  # 大输出
-
-        smc_logits_2, smc_l2norm_2, smc_sigmoid_2 = self.salient_map_clustering(mic_2, which=2)
-        # cam_2 = self.cluster_activation_map(smc_logits_2, mic_2)  # 簇激活图：Cluster Activation Map
-        # sme_2 = self.salient_map_divide(cam_2)  # 显著图划分：Salient Map Divide
+        smc_logits_2, smc_l2norm_2, smc_sigmoid_2 = self.salient_map_clustering(mic_2)
 
         return_2 = {
             "mic_f": mic_f_2,
             "mic": mic_2,
-            # "mic_out": mic_2_out,
-            # "mic_out_up": mic_2_out_up,
-            # "mic_out_sigmoid": mic_2_out_sigmoid,
-            # "mic_out_up_sigmoid": mic_2_out_up_sigmoid,
             "smc_logits": smc_logits_2,
             "smc_l2norm": smc_l2norm_2,
             "smc_sigmoid": smc_sigmoid_2,
-            # "cam": cam_2,
-            # "sme": sme_2
         }
 
         # 3
@@ -283,93 +230,25 @@ class BASNet(nn.Module):
         mic_f_3 = self.mic_3_b1(mic_f_3)
         mic_f_3 = self.mic_3_b2(mic_f_3)
         mic_f_3 = self.mic_3_b3(mic_f_3)
-
         mic_3 = self.mic_3_c1(mic_f_3)  # 512 * 7 * 7
-        # mic_3_out = self.mic_3_out_c(mic_3)  # 1 * 7 * 7
-        # mic_3_out_up = self.mic_3_up_32(mic_3_out)  # 1 * 224 * 224
-        # mic_3_out_sigmoid = torch.sigmoid(mic_3_out)  # 1 * 7 * 7  # 小输出
-        # mic_3_out_up_sigmoid = torch.sigmoid(mic_3_out_up)  # 1 * 224 * 224  # 大输出
-
-        smc_logits_3, smc_l2norm_3, smc_sigmoid_3 = self.salient_map_clustering(mic_3, which=3)
-        # cam_3 = self.cluster_activation_map(smc_logits_3, mic_3)  # 簇激活图：Cluster Activation Map
-        # sme_3 = self.salient_map_divide(cam_3)  # 显著图划分：Salient Map Divide
+        smc_logits_3, smc_l2norm_3, smc_sigmoid_3 = self.salient_map_clustering(mic_3)
 
         return_3 = {
             "mic_f": mic_f_3,
             "mic": mic_3,
-            # "mic_out": mic_3_out,
-            # "mic_out_up": mic_3_out_up,
-            # "mic_out_sigmoid": mic_3_out_sigmoid,
-            # "mic_out_up_sigmoid": mic_3_out_up_sigmoid,
             "smc_logits": smc_logits_3,
             "smc_l2norm": smc_l2norm_3,
             "smc_sigmoid": smc_sigmoid_3,
-            # "cam": cam_3,
-            # "sme": sme_3
         }
 
         return return_1, return_2, return_3
 
-    def salient_map_clustering(self, mic, which=1, has_mask=False):
-        # m1
-        mic_gaussian = mic
-        if has_mask:
-            if which == 1:
-                g_mask = self._mask_gaussian([mic.size()[2], mic.size()[3]], sigma=mic.size()[2] * mic.size()[3] // 2)
-                mic_gaussian = mic * torch.tensor(g_mask).cuda()
-            elif which == 2:
-                g_mask = self._mask_gaussian([mic.size()[2], mic.size()[3]], sigma=mic.size()[2] * mic.size()[3])
-                mic_gaussian = mic * torch.tensor(g_mask).cuda()
-            else:
-                mic_gaussian = mic
-            pass
-
-        smc_logits = F.adaptive_avg_pool2d(mic_gaussian, 1).view((mic_gaussian.size()[0], -1))  # 512
+    def salient_map_clustering(self, mic):
+        smc_logits = F.adaptive_avg_pool2d(mic, 1).view((mic.size()[0], -1))  # 512
 
         smc_l2norm = self.mic_1_l2norm(smc_logits)
         smc_sigmoid = torch.sigmoid(smc_logits)
         return smc_logits, smc_l2norm, smc_sigmoid
-
-    @staticmethod
-    def cluster_activation_map(smc_logits, feature_for_cam):
-        top_k_value, top_k_index = torch.topk(smc_logits, 1, 1)
-        cam = torch.cat([feature_for_cam[i:i+1, top_k_index[i], :, :] for i in range(feature_for_cam.size()[0])])
-        return cam
-
-    def salient_map_divide(self, cam, obj_th=0.7, bg_th=0.1):
-        for_cam_norm = self._feature_norm(cam)  # 1 * 28 * 28
-
-        mask = torch.zeros(tuple(for_cam_norm.size())).fill_(255)
-        mask = mask.cuda() if torch.cuda.is_available() else mask
-        mask[for_cam_norm > obj_th] = 1.0
-        mask[for_cam_norm < bg_th] = 0.0
-
-        return mask
-
-    @staticmethod
-    def _feature_norm(feature_map):
-        feature_shape = feature_map.size()
-        batch_min, _ = torch.min(feature_map.view((feature_shape[0], -1)), dim=-1, keepdim=True)
-        batch_max, _ = torch.max(feature_map.view((feature_shape[0], -1)), dim=-1, keepdim=True)
-        norm = torch.div(feature_map.view((feature_shape[0], -1)) - batch_min, batch_max - batch_min)
-        return norm.view(feature_shape)
-
-    @staticmethod
-    def _mask_gaussian(image_size, where=None, sigma=20):
-
-        x = np.arange(0, image_size[1], 1, float)
-        y = np.arange(0, image_size[0], 1, float)
-        y = y[:, np.newaxis]
-
-        if where:
-            x0, y0 = where[1], where[0]
-        else:
-            x0, y0 = image_size[1] // 2, image_size[0] // 2
-            pass
-
-        # 生成高斯掩码
-        mask = np.exp(-4 * np.log(2) * ((x - x0) ** 2 + (y - y0) ** 2) / sigma).astype(np.float32)
-        return mask
 
     pass
 
@@ -380,12 +259,10 @@ class BASNet(nn.Module):
 
 class BASRunner(object):
 
-    def __init__(self, epoch_num=100000, batch_size_train=8,
-                 clustering_num_1=128, clustering_num_2=256, clustering_num_3=512,
-                 clustering_ratio_1=1, clustering_ratio_2=1.5, clustering_ratio_3=2,
+    def __init__(self, batch_size_train=8, clustering_num_1=128, clustering_num_2=256, clustering_num_3=512,
+                 clustering_ratio_1=1, clustering_ratio_2=2, clustering_ratio_3=3,
                  data_dir='/mnt/4T/Data/SOD/DUTS/DUTS-TR', tra_image_dir='DUTS-TR-Image',
-                 tra_label_dir='DUTS-TR-Mask', model_dir="./saved_models/my_train_mic_only"):
-        self.epoch_num = epoch_num
+                 tra_label_dir='DUTS-TR-Mask', model_dir="./saved_models/my_train_mic5"):
         self.batch_size_train = batch_size_train
 
         # Dataset
@@ -399,16 +276,34 @@ class BASRunner(object):
 
         # Model
         self.net = BASNet(3, clustering_num_list=[clustering_num_1,
-                                                  clustering_num_2, clustering_num_3], pretrained=True)
-        self.net = self.net.cuda() if torch.cuda.is_available() else self.net
+                                                  clustering_num_2, clustering_num_3])
+
+        ###########################################################################
+        if torch.cuda.is_available():
+            self.net = nn.DataParallel(self.net)
+            self.net = self.net.cuda()
+            cudnn.benchmark = True
+        ###########################################################################
 
         # MIC
-        self.produce_class_1 = MICProduceClass(n_sample=len(self.dataset_usod),
+        self.produce_class11 = MICProduceClass(n_sample=len(self.dataset_usod),
                                                out_dim=clustering_num_1, ratio=clustering_ratio_1)
-        self.produce_class_2 = MICProduceClass(n_sample=len(self.dataset_usod),
+        self.produce_class21 = MICProduceClass(n_sample=len(self.dataset_usod),
                                                out_dim=clustering_num_2, ratio=clustering_ratio_2)
-        self.produce_class_3 = MICProduceClass(n_sample=len(self.dataset_usod),
+        self.produce_class31 = MICProduceClass(n_sample=len(self.dataset_usod),
                                                out_dim=clustering_num_3, ratio=clustering_ratio_3)
+        self.produce_class12 = MICProduceClass(n_sample=len(self.dataset_usod),
+                                               out_dim=clustering_num_1, ratio=clustering_ratio_1)
+        self.produce_class22 = MICProduceClass(n_sample=len(self.dataset_usod),
+                                               out_dim=clustering_num_2, ratio=clustering_ratio_2)
+        self.produce_class32 = MICProduceClass(n_sample=len(self.dataset_usod),
+                                               out_dim=clustering_num_3, ratio=clustering_ratio_3)
+        self.produce_class11.init()
+        self.produce_class21.init()
+        self.produce_class31.init()
+        self.produce_class12.init()
+        self.produce_class22.init()
+        self.produce_class32.init()
 
         # Loss and Optim
         self.bce_loss = nn.BCELoss()
@@ -416,7 +311,7 @@ class BASRunner(object):
         self.bce_loss = self.bce_loss.cuda() if torch.cuda.is_available() else self.bce_loss
         self.mic_loss = self.mic_loss.cuda() if torch.cuda.is_available() else self.mic_loss
 
-        self.optimizer = optim.Adam(self.net.parameters(), lr=0.001, betas=(0.9, 0.999), eps=1e-08, weight_decay=0)
+        self.optimizer = optim.Adam(self.net.parameters(), lr=0.01, betas=(0.9, 0.999), weight_decay=0)
         pass
 
     def load_model(self, model_file_name):
@@ -438,47 +333,42 @@ class BASRunner(object):
         loss_mic_3 = self.mic_loss(mic_3_out, mic_labels_3)
 
         loss_all = loss_mic_1 + loss_mic_2 + loss_mic_3
-        # loss_all = loss_mic_1 + loss_mic_2
-        # loss_all = loss_mic_1
         return loss_all, loss_mic_1, loss_mic_2, loss_mic_3
 
-    def train(self, start_epoch=0, save_epoch_freq=5, print_ite_num=100, update_epoch_freq=1):
+    def train(self, epoch_num=200, start_epoch=0, save_epoch_freq=10, print_ite_num=100):
 
-        for epoch in range(start_epoch, self.epoch_num):
-
-            ###########################################################################
-            # 0 更新标签
-            if epoch % update_epoch_freq == 0:
-                Tools.print()
-                Tools.print("Update label {} .......".format(epoch))
-                self.net.eval()
-
-                self.produce_class_1.reset()
-                self.produce_class_2.reset()
-                self.produce_class_3.reset()
-                for batch_idx, (inputs, indexes) in enumerate(self.dataloader_usod):
-                    inputs = inputs.type(torch.FloatTensor)
-                    inputs = inputs.cuda() if torch.cuda.is_available() else inputs
-                    indexes = indexes.cuda() if torch.cuda.is_available() else indexes
-
-                    return_1, return_2, return_3 = self.net(inputs)
-
-                    self.produce_class_1.cal_label(return_1["smc_l2norm"], indexes)
-                    self.produce_class_2.cal_label(return_2["smc_l2norm"], indexes)
-                    self.produce_class_3.cal_label(return_3["smc_l2norm"], indexes)
-                    pass
-
-                Tools.print("Epoch: [{}] {}/{} {}/{} {}/{}".format(
-                    epoch, self.produce_class_1.count, self.produce_class_1.count_2, self.produce_class_2.count,
-                    self.produce_class_2.count_2, self.produce_class_3.count, self.produce_class_3.count_2))
-                Tools.print()
+        if start_epoch > 0:
+            self.net.eval()
+            Tools.print("Update label {} .......".format(start_epoch))
+            self.produce_class11.reset()
+            self.produce_class21.reset()
+            self.produce_class31.reset()
+            for _idx, (inputs, _, indexes) in tqdm(enumerate(self.dataloader_usod), total=len(self.dataloader_usod)):
+                inputs, indexes = inputs.cuda(), indexes.cuda()
+                return_1, return_2, return_3 = self.net(inputs)
+                self.produce_class11.cal_label(return_1["smc_logits"], indexes)
+                self.produce_class21.cal_label(return_2["smc_logits"], indexes)
+                self.produce_class31.cal_label(return_3["smc_logits"], indexes)
                 pass
+            Tools.print("Epoch: [{}] 1-{}/{} 2-{}/{} 3-{}/{}".format(
+                start_epoch, self.produce_class11.count, self.produce_class11.count_2,
+                self.produce_class21.count, self.produce_class21.count_2,
+                self.produce_class31.count, self.produce_class31.count_2))
+            pass
+
+        for epoch in range(start_epoch, epoch_num):
+            Tools.print()
 
             ###########################################################################
             # 1 训练模型
             all_loss, all_loss_mic_1, all_loss_mic_2, all_loss_mic_3 = 0.0, 0.0, 0.0, 0.0
             self.net.train()
-            for i, (inputs, indexes) in enumerate(self.dataloader_usod):
+
+            self.produce_class11.reset()
+            self.produce_class21.reset()
+            self.produce_class31.reset()
+
+            for i, (inputs, indexes) in tqdm(enumerate(self.dataloader_usod), total=len(self.dataloader_usod)):
                 inputs = inputs.type(torch.FloatTensor)
                 inputs = inputs.cuda() if torch.cuda.is_available() else inputs
                 indexes = indexes.cuda() if torch.cuda.is_available() else indexes
@@ -486,11 +376,15 @@ class BASRunner(object):
 
                 return_1, return_2, return_3 = self.net(inputs)
 
-                mic_labels_1 = self.produce_class_1.get_label(indexes)
+                self.produce_class11.cal_label(return_1["smc_logits"], indexes)
+                self.produce_class21.cal_label(return_2["smc_logits"], indexes)
+                self.produce_class31.cal_label(return_3["smc_logits"], indexes)
+
+                mic_labels_1 = self.produce_class12.get_label(indexes)
                 mic_labels_1 = mic_labels_1.cuda() if torch.cuda.is_available() else mic_labels_1
-                mic_labels_2 = self.produce_class_2.get_label(indexes)
+                mic_labels_2 = self.produce_class22.get_label(indexes)
                 mic_labels_2 = mic_labels_2.cuda() if torch.cuda.is_available() else mic_labels_2
-                mic_labels_3 = self.produce_class_3.get_label(indexes)
+                mic_labels_3 = self.produce_class32.get_label(indexes)
                 mic_labels_3 = mic_labels_3.cuda() if torch.cuda.is_available() else mic_labels_3
 
                 loss, loss_mic_1, loss_mic_2, loss_mic_3 = self.all_loss_fusion(
@@ -504,19 +398,34 @@ class BASRunner(object):
                 all_loss_mic_2 += loss_mic_2.item()
                 all_loss_mic_3 += loss_mic_3.item()
                 if i % print_ite_num == 0:
-                    Tools.print("[E:{:4d}/{:5d}, b:{:4d}/{:4d}] "
-                                "a loss:{:.3f} loss:{:.3f} "
-                                "a mic 1:{:.3f} mic 1:{:.3f} "
-                                "a mic 2:{:.3f} mic 2:{:.3f} "
-                                "a mic 3:{:.3f} mic 3:{:.3f}".format(
-                        epoch, self.epoch_num, i, len(self.dataloader_usod),
-                        all_loss/(i+1), loss.item(),
-                        all_loss_mic_1/(i+1), loss_mic_1.item(),
-                        all_loss_mic_2/(i+1), loss_mic_2.item(),
-                        all_loss_mic_3/(i+1), loss_mic_3.item()))
+                    Tools.print(
+                        "[E:{:3d}/{:3d}, b:{:3d}/{:3d}] loss:{:.3f} loss:{:.3f} "
+                        "mic 1:{:.3f}/{:.3f} mic2:{:.3f}/{:.3f} mic3:{:.3f}/{:.3f}".format(
+                            epoch, epoch_num, i, len(self.dataloader_usod),
+                            all_loss/(i+1), loss.item(), all_loss_mic_1/(i+1), loss_mic_1.item(),
+                            all_loss_mic_2/(i+1), loss_mic_2.item(), all_loss_mic_3/(i+1), loss_mic_3.item()))
                     pass
 
                 pass
+
+            Tools.print("[E:{:3d}/{:3d}] loss:{:.3f} mic 1:{:.3f} mic2:{:.3f} mic3:{:.3f}".format(
+                epoch, epoch_num, all_loss / (len(self.dataloader_usod) + 1),
+                all_loss_mic_1 / (len(self.dataloader_usod) + 1),
+                all_loss_mic_2 / (len(self.dataloader_usod) + 1),
+                all_loss_mic_3 / (len(self.dataloader_usod) + 1)))
+
+            classes = self.produce_class12.classes
+            self.produce_class12.classes = self.produce_class11.classes
+            self.produce_class11.classes = classes
+            classes = self.produce_class22.classes
+            self.produce_class22.classes = self.produce_class21.classes
+            self.produce_class21.classes = classes
+            classes = self.produce_class32.classes
+            self.produce_class32.classes = self.produce_class31.classes
+            self.produce_class31.classes = classes
+            Tools.print("Train: [{}] 1-{}/{}".format(epoch, self.produce_class11.count, self.produce_class11.count_2))
+            Tools.print("Train: [{}] 2-{}/{}".format(epoch, self.produce_class21.count, self.produce_class21.count_2))
+            Tools.print("Train: [{}] 3-{}/{}".format(epoch, self.produce_class31.count, self.produce_class31.count_2))
 
             ###########################################################################
             # 2 保存模型
@@ -542,11 +451,10 @@ class BASRunner(object):
 
 
 if __name__ == '__main__':
-    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1, 2, 3"
 
-    # bas_runner = BASRunner(batch_size_train=2, data_dir='D:\\data\\SOD\\DUTS\\DUTS-TR')
-    # bas_runner = BASRunner(batch_size_train=12, model_dir="./saved_models/my_mic_123_mask")
-    bas_runner = BASRunner(batch_size_train=8, model_dir="./saved_models/my_train5_mic")
-    bas_runner.load_model('./saved_models/my_train5_mic/150_train_5.433.pth')
-    bas_runner.train(start_epoch=151)
+    bas_runner = BASRunner(batch_size_train=16 * 4, data_dir="/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR",
+                           model_dir="./saved_models/my_train_mic5")
+    # bas_runner.load_model('./saved_models/my_train5_mic/150_train_5.433.pth')
+    bas_runner.train(epoch_num=300, start_epoch=0)
     pass
