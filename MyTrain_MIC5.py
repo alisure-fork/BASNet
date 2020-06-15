@@ -260,7 +260,7 @@ class BASNet(nn.Module):
 class BASRunner(object):
 
     def __init__(self, batch_size_train=8, clustering_num_1=128, clustering_num_2=256, clustering_num_3=512,
-                 clustering_ratio_1=1, clustering_ratio_2=2, clustering_ratio_3=3,
+                 clustering_ratio_1=1, clustering_ratio_2=1.5, clustering_ratio_3=2,
                  data_dir='/mnt/4T/Data/SOD/DUTS/DUTS-TR', tra_image_dir='DUTS-TR-Image',
                  tra_label_dir='DUTS-TR-Mask', model_dir="./saved_models/my_train_mic5"):
         self.batch_size_train = batch_size_train
@@ -311,11 +311,25 @@ class BASRunner(object):
         self.bce_loss = self.bce_loss.cuda() if torch.cuda.is_available() else self.bce_loss
         self.mic_loss = self.mic_loss.cuda() if torch.cuda.is_available() else self.mic_loss
 
-        self.optimizer = optim.Adam(self.net.parameters(), lr=0.01, betas=(0.9, 0.999), weight_decay=0)
+        self.learning_rate = [[0, 0.01], [400, 0.001]]
+        self.optimizer = optim.Adam(self.net.parameters(), lr=self.learning_rate[0][1],
+                                    betas=(0.9, 0.999), weight_decay=0)
         pass
 
+    def _adjust_learning_rate(self, epoch):
+        learning_rate = self.learning_rate[0][1]
+        for param_group in self.optimizer.param_groups:
+            for lr in self.learning_rate:
+                if epoch == lr[0]:
+                    learning_rate = lr[1]
+                    param_group['lr'] = learning_rate
+            pass
+        return learning_rate
+
     def load_model(self, model_file_name):
-        self.net.load_state_dict(torch.load(model_file_name))
+        checkpoint = torch.load(model_file_name)
+        checkpoint_value = {key: checkpoint[key] for key in checkpoint.keys() if "_c1." not in key}
+        self.net.load_state_dict(checkpoint_value, strict=False)
         Tools.print("restore from {}".format(model_file_name))
         pass
 
@@ -343,21 +357,40 @@ class BASRunner(object):
             self.produce_class11.reset()
             self.produce_class21.reset()
             self.produce_class31.reset()
-            for _idx, (inputs, _, indexes) in tqdm(enumerate(self.dataloader_usod), total=len(self.dataloader_usod)):
-                inputs, indexes = inputs.cuda(), indexes.cuda()
-                return_1, return_2, return_3 = self.net(inputs)
-                self.produce_class11.cal_label(return_1["smc_logits"], indexes)
-                self.produce_class21.cal_label(return_2["smc_logits"], indexes)
-                self.produce_class31.cal_label(return_3["smc_logits"], indexes)
+            with torch.no_grad():
+                for _idx, (inputs, indexes) in tqdm(enumerate(self.dataloader_usod), total=len(self.dataloader_usod)):
+                    inputs = inputs.type(torch.FloatTensor)
+                    inputs = inputs.cuda() if torch.cuda.is_available() else inputs
+                    indexes = indexes.cuda() if torch.cuda.is_available() else indexes
+
+                    return_1, return_2, return_3 = self.net(inputs)
+                    self.produce_class11.cal_label(return_1["smc_logits"], indexes)
+                    self.produce_class21.cal_label(return_2["smc_logits"], indexes)
+                    self.produce_class31.cal_label(return_3["smc_logits"], indexes)
+                    pass
                 pass
-            Tools.print("Epoch: [{}] 1-{}/{} 2-{}/{} 3-{}/{}".format(
-                start_epoch, self.produce_class11.count, self.produce_class11.count_2,
-                self.produce_class21.count, self.produce_class21.count_2,
-                self.produce_class31.count, self.produce_class31.count_2))
+            classes = self.produce_class12.classes
+            self.produce_class12.classes = self.produce_class11.classes
+            self.produce_class11.classes = classes
+            classes = self.produce_class22.classes
+            self.produce_class22.classes = self.produce_class21.classes
+            self.produce_class21.classes = classes
+            classes = self.produce_class32.classes
+            self.produce_class32.classes = self.produce_class31.classes
+            self.produce_class31.classes = classes
+            Tools.print("Train: [{}] 1-{}/{}".format(start_epoch, self.produce_class11.count,
+                                                     self.produce_class11.count_2))
+            Tools.print("Train: [{}] 2-{}/{}".format(start_epoch, self.produce_class21.count,
+                                                     self.produce_class21.count_2))
+            Tools.print("Train: [{}] 3-{}/{}".format(start_epoch, self.produce_class31.count,
+                                                     self.produce_class31.count_2))
             pass
 
+        all_loss = 0
         for epoch in range(start_epoch, epoch_num):
             Tools.print()
+            lr = self._adjust_learning_rate(epoch)
+            Tools.print('Epoch:{:03d}, lr={:.5f} lr={:.5f}'.format(epoch, lr, self.optimizer.param_groups[0]['lr']))
 
             ###########################################################################
             # 1 训练模型
@@ -441,6 +474,14 @@ class BASRunner(object):
 
             pass
 
+        # Final Save
+        save_file_name = Tools.new_dir(os.path.join(
+            self.model_dir, "{}_train_{:.3f}.pth".format(epoch_num, all_loss / len(self.dataloader_usod))))
+        torch.save(self.net.state_dict(), save_file_name)
+
+        Tools.print()
+        Tools.print("Save Model to {}".format(save_file_name))
+        Tools.print()
         pass
 
     pass
@@ -451,10 +492,15 @@ class BASRunner(object):
 
 
 if __name__ == '__main__':
-    os.environ["CUDA_VISIBLE_DEVICES"] = "1, 2, 3"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
 
-    bas_runner = BASRunner(batch_size_train=16 * 4, data_dir="/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR",
-                           model_dir="./saved_models/my_train_mic5")
-    # bas_runner.load_model('./saved_models/my_train5_mic/150_train_5.433.pth')
-    bas_runner.train(epoch_num=300, start_epoch=0)
+    """
+    2020-06-15 06:11:23 [E:299/300] loss:3.849 mic 1:1.476 mic2:1.213 mic3:1.159
+    """
+
+    bas_runner = BASRunner(batch_size_train=16 * 6, data_dir="/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR",
+                           clustering_num_1=128 * 4, clustering_num_2=128 * 4, clustering_num_3=128 * 4,
+                           model_dir="./saved_models/my_train_mic5_large")
+    bas_runner.load_model('./saved_models/my_train_mic5/500_train_1.491.pth')
+    bas_runner.train(epoch_num=500, start_epoch=0)
     pass
