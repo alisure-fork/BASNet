@@ -500,7 +500,7 @@ if __name__ == '__main__':
 
     bas_runner = BASRunner(batch_size_train=16 * 4, data_dir="/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR",
                            clustering_num_1=128 * 4, clustering_num_2=128 * 4, clustering_num_3=128 * 4,
-                           model_dir="../BASNetTemp/saved_models/my_train_mic5_large")
-    bas_runner.load_model('../BASNetTemp/saved_models/my_train_mic5_large/90_train_3.893.pth')
-    bas_runner.train(epoch_num=500, start_epoch=91)
+                           model_dir="../BASNetTemp/saved_models/my_train_mic5_large_demo")
+    bas_runner.load_model('../BASNetTemp/saved_models/my_train_mic5_large/500_train_0.880.pth')
+    bas_runner.train(epoch_num=500, start_epoch=0)
     pass
