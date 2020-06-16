@@ -21,8 +21,8 @@ def load_model(model_dir, net):
 def one_5():
 
     # --------- 1. get path ---------
-    model_dir = './saved_models/my_train_mic5/500_train_1.491.pth'
-    prediction_dir = Tools.new_dir('./test_data/my_train_mic5_500_image')
+    model_dir = '../BASNetTemp/saved_models/my_train_mic5_large/500_train_0.880.pth'
+    prediction_dir = Tools.new_dir('./test_data/my_train_mic5_large_500_image')
 
     # --------- 2. data loader ---------
     image_dir = "/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR/DUTS-TR-Image/"
@@ -32,7 +32,8 @@ def one_5():
 
     # --------- 3. model define ---------
     Tools.print("...load BASNet...")
-    net = BASNet(3, clustering_num_list=[128, 256, 512]).cuda()
+    # net = BASNet(3, clustering_num_list=[128, 256, 512]).cuda()
+    net = BASNet(3, clustering_num_list=[128 * 4, 128 * 4, 128 * 4]).cuda()
     load_model(model_dir, net=net)
 
     # --------- 4. inference for each image ---------
@@ -74,8 +75,8 @@ def one_5():
 
 def one_1_3():
     # --------- 1. get path ---------
-    model_dir = './saved_models/my_train_mic5/500_train_1.491.pth'
-    prediction_dir = Tools.new_dir('./test_data/my_train_mic5_500_image_1_3')
+    model_dir = '../BASNetTemp/saved_models/my_train_mic5_large/500_train_0.880.pth'
+    prediction_dir = Tools.new_dir('./test_data/my_train_mic5_large_500_image_1_3')
 
     # --------- 2. data loader ---------
     image_dir = "/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR/DUTS-TR-Image/"
@@ -85,7 +86,7 @@ def one_1_3():
 
     # --------- 3. model define ---------
     Tools.print("...load BASNet...")
-    net = BASNet(3, clustering_num_list=[128, 256, 512]).cuda()
+    net = BASNet(3, clustering_num_list=[128 * 4, 128 * 4, 128 * 4]).cuda()
     load_model(model_dir, net=net)
 
     # --------- 4. inference for each image ---------
@@ -125,8 +126,8 @@ def one_1_3():
 
 def one_fusion():
     # --------- 1. get path ---------
-    model_dir = './saved_models/my_train_mic5/500_train_1.491.pth'
-    prediction_dir = Tools.new_dir('./test_data/my_train_mic5_500_image_fusion_23')
+    model_dir = '../BASNetTemp/saved_models/my_train_mic5_large/500_train_0.880.pth'
+    prediction_dir = Tools.new_dir('./test_data/my_train_mic5_large_500_image_fusion_123')
 
     # --------- 2. data loader ---------
     image_dir = "/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR/DUTS-TR-Image/"
@@ -136,7 +137,7 @@ def one_fusion():
 
     # --------- 3. model define ---------
     Tools.print("...load BASNet...")
-    net = BASNet(3, clustering_num_list=[128, 256, 512]).cuda()
+    net = BASNet(3, clustering_num_list=[128 * 4, 128 * 4, 128 * 4]).cuda()
     load_model(model_dir, net=net)
 
     # --------- 4. inference for each image ---------
@@ -159,8 +160,8 @@ def one_fusion():
         io.imsave(result_name, im_data)
 
         imo_list = []
-        # for i, return_which in enumerate([return_1, return_2, return_3]):
-        for i, return_which in enumerate([return_2, return_3]):
+        for i, return_which in enumerate([return_1, return_2, return_3]):
+        # for i, return_which in enumerate([return_2, return_3]):
             top_k_value, top_k_index = torch.topk(return_which["smc_logits"], 1, 1)
             smc_result = top_k_index.cpu().detach().numpy()[0][0]
             d = return_which["mic"][:, smc_result, :, :]
@@ -170,7 +171,8 @@ def one_fusion():
             imo_list.append(predict_np)
             pass
 
-        Image.fromarray(np.asarray(np.sum(imo_list, axis=0) / 2 * 255, dtype=np.uint8)).save(
+        Image.fromarray(np.asarray(np.sum(imo_list, axis=0) / 3 * 255, dtype=np.uint8)).save(
+        # Image.fromarray(np.asarray(np.sum(imo_list, axis=0) / 2 * 255, dtype=np.uint8)).save(
             os.path.join(result_path, '{}_{}.png'.format(
                 os.path.splitext(os.path.basename(img_name))[0], smc_result)))
         pass
@@ -180,7 +182,7 @@ def one_fusion():
 
 if __name__ == '__main__':
 
-    os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
     one_fusion()
     pass

@@ -328,8 +328,8 @@ class BASRunner(object):
 
     def load_model(self, model_file_name):
         checkpoint = torch.load(model_file_name)
-        checkpoint_value = {key: checkpoint[key] for key in checkpoint.keys() if "_c1." not in key}
-        self.net.load_state_dict(checkpoint_value, strict=False)
+        # checkpoint = {key: checkpoint[key] for key in checkpoint.keys() if "_c1." not in key}
+        self.net.load_state_dict(checkpoint, strict=False)
         Tools.print("restore from {}".format(model_file_name))
         pass
 
@@ -492,15 +492,15 @@ class BASRunner(object):
 
 
 if __name__ == '__main__':
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1, 2, 3"
 
     """
     2020-06-15 06:11:23 [E:299/300] loss:3.849 mic 1:1.476 mic2:1.213 mic3:1.159
     """
 
-    bas_runner = BASRunner(batch_size_train=16 * 6, data_dir="/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR",
+    bas_runner = BASRunner(batch_size_train=16 * 4, data_dir="/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR",
                            clustering_num_1=128 * 4, clustering_num_2=128 * 4, clustering_num_3=128 * 4,
-                           model_dir="./saved_models/my_train_mic5_large")
-    bas_runner.load_model('./saved_models/my_train_mic5/500_train_1.491.pth')
-    bas_runner.train(epoch_num=500, start_epoch=0)
+                           model_dir="../BASNetTemp/saved_models/my_train_mic5_large")
+    bas_runner.load_model('../BASNetTemp/saved_models/my_train_mic5_large/90_train_3.893.pth')
+    bas_runner.train(epoch_num=500, start_epoch=91)
     pass
