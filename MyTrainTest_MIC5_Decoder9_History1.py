@@ -121,7 +121,7 @@ class DatasetUSOD(Dataset):
 
         im = Image.fromarray(np.asarray(his * 255, dtype=np.uint8)).resize((param[5], param[4]))
         im = im.transpose(Image.FLIP_LEFT_RIGHT) if param[6] else im
-        history = history.paste(im, (param[3], param[2]))
+        history.paste(im, (param[3], param[2]))
         history.save(h_path)
         pass
 
@@ -557,7 +557,7 @@ class BASRunner(object):
                                            his=np.asarray(history.squeeze().detach().cpu()), param=np.asarray(param))
         pass
 
-    def train(self, epoch_num=200, start_epoch=0, save_epoch_freq=10, print_ite_num=100):
+    def train(self, epoch_num=200, start_epoch=0, save_epoch_freq=10, print_ite_num=100, eval_epoch_freq=10):
 
         if start_epoch > 0:
             self.net.eval()
@@ -686,9 +686,9 @@ class BASRunner(object):
             # 2 测试模型
             if epoch % eval_epoch_freq == 0:
                 Tools.print()
-                # self.eval(self.net, epoch=epoch, is_test=False)
+                self.eval(self.net, epoch=epoch, is_test=False)
                 Tools.print()
-                # self.eval(self.net, epoch=epoch, is_test=True)
+                self.eval(self.net, epoch=epoch, is_test=True)
                 pass
 
             # 3 保存模型
