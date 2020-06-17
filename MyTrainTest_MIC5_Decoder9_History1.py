@@ -612,7 +612,7 @@ class BASRunner(object):
             self.produce_class31.reset()
 
             for i, (inputs, historys, params, indexes) in tqdm(enumerate(self.dataloader_usod),
-                                                              total=len(self.dataloader_usod)):
+                                                               total=len(self.dataloader_usod)):
                 inputs = inputs.type(torch.FloatTensor).cuda()
                 historys = historys.type(torch.FloatTensor).cuda()
                 indexes = indexes.cuda()
@@ -656,7 +656,7 @@ class BASRunner(object):
                     Tools.print("[E:{:4d}/{:4d}, b:{:4d}/{:4d}] l:{:.2f}/{:.2f} "
                                 "mic1:{:.2f}/{:.2f} mic2:{:.2f}/{:.2f} mic3:{:.2f}/{:.2f} "
                                 "sod:{:.2f}/{:.2f}".format(
-                        epoch, self.epoch_num, i, len(self.dataloader_usod), all_loss/(i+1), loss.item(),
+                        epoch, epoch_num, i, len(self.dataloader_usod), all_loss/(i+1), loss.item(),
                         all_loss_mic_1/(i+1), loss_mic[0].item(), all_loss_mic_2/(i+1), loss_mic[1].item(),
                         all_loss_mic_3/(i+1), loss_mic[2].item(), all_loss_sod/(i+1), loss_sod.item()))
                     pass
@@ -790,7 +790,7 @@ class BASRunner(object):
 if __name__ == '__main__':
     os.environ["CUDA_VISIBLE_DEVICES"] = "1, 2, 3"
 
-    bas_runner = BASRunner(batch_size_train=16 * 4, data_dir="/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR",
+    bas_runner = BASRunner(batch_size_train=16 * 2, data_dir="/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR",
                            clustering_num_1=128 * 4, clustering_num_2=128 * 4, clustering_num_3=128 * 4,
                            history_dir="../BASNetTemp/history/my_train_mic5_large_history1",
                            model_dir="../BASNetTemp/saved_models/my_train_mic5_large_history1")
