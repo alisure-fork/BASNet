@@ -438,7 +438,7 @@ class BASNet(nn.Module):
     def _up_to_target(source, target):
         if source.size()[2] != target.size()[2] or source.size()[3] != target.size()[3]:
             source = torch.nn.functional.interpolate(
-                source, size=[target.size()[2], target.size()[3]], mode='bilinear')
+                source, size=[target.size()[2], target.size()[3]], mode='bilinear', align_corners=False)
             pass
         return source
 
@@ -634,11 +634,9 @@ class BASRunner(object):
                 sod_output = return_l["output"]["output_1"]
 
                 ######################################################################################################
-                # 标签：历史信息+CAM
+                # 历史信息 = 历史信息 + CAM
                 sod_label = sod_cam_norm_up if historys.max() == 0 else (historys * 0.5 + sod_cam_norm_up * 0.5)
-                # 历史信息：SOD预测的历史结果
-                historys = historys * 0.5 + sod_output * 0.5
-                self.save_history_info(historys=historys, params=params, indexes=indexes)
+                self.save_history_info(historys=sod_label, params=params, indexes=indexes)
                 ######################################################################################################
 
                 loss, loss_mic, loss_sod = self.all_loss_fusion(
@@ -684,13 +682,15 @@ class BASRunner(object):
 
             ###########################################################################
             # 2 测试模型
-            if epoch % eval_epoch_freq == 0:
-                Tools.print()
-                self.eval(self.net, epoch=epoch, is_test=False)
-                Tools.print()
-                self.eval(self.net, epoch=epoch, is_test=True)
-                pass
+            # if epoch % eval_epoch_freq == 0:
+            #     Tools.print()
+            #     self.eval(self.net, epoch=epoch, is_test=False)
+            #     Tools.print()
+            #     self.eval(self.net, epoch=epoch, is_test=True)
+            #     pass
+            ###########################################################################
 
+            ###########################################################################
             # 3 保存模型
             if epoch % save_epoch_freq == 0:
                 save_file_name = Tools.new_dir(os.path.join(
@@ -725,7 +725,7 @@ class BASRunner(object):
         lbl_name_list = [os.path.join(data_dir, label_dir, '{}.png'.format(
             os.path.splitext(os.path.basename(img_path))[0])) for img_path in img_name_list]
         dataset_eval_usod = DatasetEvalUSOD(img_name_list=img_name_list, lab_name_list=lbl_name_list)
-        dataloader_eval_usod = DataLoader(dataset_eval_usod, 1, shuffle=False, num_workers=2)
+        dataloader_eval_usod = DataLoader(dataset_eval_usod, 1, shuffle=False, num_workers=8)
 
         # 执行
         d_m = [["output", "output_1"], ["output", "output_2"],
@@ -742,7 +742,7 @@ class BASRunner(object):
 
             mae_list = [0.0] * len(d_m)
             for index, key in enumerate(d_m):
-                return_which = return_d if index < 3 else return_l
+                return_which = return_l if index < 2 else return_d
                 d_out = return_which[key[0]][key[1]].squeeze().cpu().data.numpy()
                 now_pred = np.asarray(Image.fromarray(d_out * 255).resize(
                     (now_label.shape[1], now_label.shape[0]), resample=Image.BILINEAR)) / 255
@@ -759,7 +759,7 @@ class BASRunner(object):
             if i % print_ite_num == 0:
                 now = ""
                 for index, key in enumerate(d_m):
-                    now += "{}:{:.2f}/{:.2f} ".format(key, avg_mae[index] / (i + 1), mae_list[index])
+                    now += "{}:{:.2f}/{:.2f} ".format(key[0], avg_mae[index] / (i + 1), mae_list[index])
                     pass
                 Tools.print("{} [E:{:4d}, b:{:4d}/{:4d}] {}".format("Test" if is_test else "Train",
                                                                     epoch, i, len(dataloader_eval_usod), now))
@@ -775,7 +775,7 @@ class BASRunner(object):
             avg_recall[index] = avg_recall[index] / len(dataloader_eval_usod)
             score[index] = (1+beta_2)*avg_prec[index]*avg_recall[index]/(beta_2*avg_prec[index]+avg_recall[index])
             Tools.print("{} {} {} {} {}".format("Test" if is_test else "Train", epoch,
-                                                key, avg_mae[index], score[index].max()))
+                                                key[0], avg_mae[index], score[index].max()))
             pass
 
         pass
