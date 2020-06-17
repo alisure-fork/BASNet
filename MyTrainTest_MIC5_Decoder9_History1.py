@@ -547,7 +547,7 @@ class BASRunner(object):
 
         loss_all = loss_mic_1 + loss_mic_2 + loss_mic_3
         if not only_mic:
-            loss_all = loss_all + 10 * loss_bce
+            loss_all = loss_all + loss_bce
             pass
         return loss_all, [loss_mic_1, loss_mic_2, loss_mic_3], loss_bce
 
@@ -795,5 +795,5 @@ if __name__ == '__main__':
                            history_dir="../BASNetTemp/history/my_train_mic5_large_history1",
                            model_dir="../BASNetTemp/saved_models/my_train_mic5_large_history1")
     bas_runner.load_model('../BASNetTemp/saved_models/my_train_mic5_large/500_train_0.880.pth')
-    bas_runner.train(epoch_num=500, start_epoch=0)
+    bas_runner.train(epoch_num=500, start_epoch=1)
     pass
