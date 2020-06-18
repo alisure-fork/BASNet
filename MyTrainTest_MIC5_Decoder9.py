@@ -766,8 +766,9 @@ if __name__ == '__main__':
     os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
     bas_runner = BASRunner(batch_size_train=8, has_mask=True, more_obj=False,
-                           model_dir="./saved_models/my_train_mic5_decoder9_aug_mask_norm_5bce_dall_label55")
-    bas_runner.load_model('./saved_models/my_train5_diff_aug_mask/125_train_6.569.pth')
+                           data_dir="/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR",
+                           model_dir="../BASNetTemp/saved_models/demo")
+    # bas_runner.load_model('./saved_models/my_train5_diff_aug_mask/125_train_6.569.pth')
 
     bas_runner.train()
     pass

@@ -22,76 +22,80 @@ from torchvision.models.resnet import BasicBlock as ResBlock
 
 
 class RandomResizedCrop(transforms.RandomResizedCrop):
-    def __call__(self, img, his, parm):
+    def __call__(self, img, parm, his=None):
         i, j, h, w = self.get_params(img, self.scale, self.ratio)
-        img2 = transforms.functional.resized_crop(img, i, j, h, w, self.size, self.interpolation)
-        his2 = transforms.functional.resized_crop(his, i, j, h, w, self.size, self.interpolation)
+        img = transforms.functional.resized_crop(img, i, j, h, w, self.size, self.interpolation)
         parm.extend([i, j, h, w])
-        return img2, his2, parm
+        if his is not None:
+            his = transforms.functional.resized_crop(his, i, j, h, w, self.size, self.interpolation)
+        return img, parm, his
 
     pass
 
 
 class ColorJitter(transforms.ColorJitter):
-    def __call__(self, img, his, parm):
+    def __call__(self, img, parm, his=None):
         img = super().__call__(img)
-        return img, his, parm
+        return img, parm, his
 
     pass
 
 
 class RandomGrayscale(transforms.RandomGrayscale):
-    def __call__(self, img, his, parm):
+    def __call__(self, img, parm, his=None):
         img = super().__call__(img)
-        return img, his, parm
+        return img, parm, his
 
     pass
 
 
 class RandomHorizontalFlip(transforms.RandomHorizontalFlip):
-    def __call__(self, img, his, parm):
+    def __call__(self, img, parm, his=None):
         if random.random() < self.p:
             parm.append(1)
             img = transforms.functional.hflip(img)
-            his = transforms.functional.hflip(his)
+            if his is not None:
+                his = transforms.functional.hflip(his)
         else:
             parm.append(0)
-        return img, his, parm
+        return img, parm, his
 
     pass
 
 
 class ToTensor(transforms.ToTensor):
-    def __call__(self, img, his, parm):
+    def __call__(self, img, parm, his=None):
         img = super().__call__(img)
-        his = super().__call__(his)
-        return img, his, parm
+        if his is not None:
+            his = super().__call__(his)
+        return img, parm, his
 
     pass
 
 
 class Normalize(transforms.Normalize):
-    def __call__(self, img, his, parm):
+    def __call__(self, img, parm, his=None):
         img = super().__call__(img)
-        return img, his, parm
+        return img, parm, his
 
     pass
 
 
 class Compose(transforms.Compose):
-    def __call__(self, img, his, param):
+    def __call__(self, img, parm, his=None):
         for t in self.transforms:
-            img, his, param = t(img, his, param)
-        return img, his, param
+            img, parm, his = t(img, parm, his)
+        return img, parm, his
 
     pass
 
 
 class DatasetUSOD(Dataset):
 
-    def __init__(self, img_name_list, his_name_list, is_train=True):
+    def __init__(self, img_name_list, his_name_list=None, is_train=True):
         self.image_name_list = img_name_list
         self.history_name_list = his_name_list
+        self.has_history = self.history_name_list is not None
 
         self.is_train = is_train
         self.transform_train = Compose([RandomResizedCrop(size=224, scale=(0.3, 1.)),
@@ -106,23 +110,29 @@ class DatasetUSOD(Dataset):
 
     def __getitem__(self, idx):
         image = Image.open(self.image_name_list[idx]).convert("RGB")
-        h_path = self.history_name_list[idx]
-        history = Image.open(h_path).convert("L")if os.path.exists(h_path) else Image.new("L", size=image.size)
+
+        history = None
+        if self.has_history:
+            h_path = self.history_name_list[idx]
+            history = Image.open(h_path).convert("L")if os.path.exists(h_path) else Image.new("L", size=image.size)
+
         param = [image.size[0], image.size[1]]
-        image, history, param = self.transform_train(
-            image, history, param) if self.is_train else self.transform_test(image, history, param)
-        return image, history, np.asarray(param), idx
+        image, param, history = self.transform_train(
+            image, param, history) if self.is_train else self.transform_test(image, param, history)
+
+        return image, history if self.has_history else image, np.asarray(param), idx
 
     def save_history(self, idx, his, param):
         """ his: [0, 1] """
-        h_path = Tools.new_dir(self.history_name_list[idx])
-        history = Image.open(h_path).convert("L")if os.path.exists(
-            h_path) else Image.new("L", size=[param[0], param[1]])
+        if self.history_name_list is not None:
+            h_path = Tools.new_dir(self.history_name_list[idx])
+            history = Image.open(h_path).convert("L")if os.path.exists(
+                h_path) else Image.new("L", size=[param[0], param[1]])
 
-        im = Image.fromarray(np.asarray(his * 255, dtype=np.uint8)).resize((param[5], param[4]))
-        im = im.transpose(Image.FLIP_LEFT_RIGHT) if param[6] else im
-        history.paste(im, (param[3], param[2]))
-        history.save(h_path)
+            im = Image.fromarray(np.asarray(his * 255, dtype=np.uint8)).resize((param[5], param[4]))
+            im = im.transpose(Image.FLIP_LEFT_RIGHT) if param[6] else im
+            history.paste(im, (param[3], param[2]))
+            history.save(h_path)
         pass
 
     pass
@@ -312,24 +322,16 @@ class BASNet(nn.Module):
 
         # -------------Decoder-------------
         # Decoder 1
-        self.decoder_1_b1 = ResBlock(512, 512)  # 28
-        self.decoder_1_b2 = ResBlock(512, 512)  # 28
-        self.decoder_1_b3 = ResBlock(512, 512)  # 28
-        self.decoder_1_out = nn.Conv2d(512, 1, 3, padding=1)
+        self.decoder_1_b = ResBlock(512, 512)  # 28
         self.decoder_1_c = ConvBlock(512, 256, has_relu=True)  # 28
 
         # Decoder 2
-        self.decoder_2_b1 = ResBlock(256, 256)  # 56
-        self.decoder_2_b2 = ResBlock(256, 256)  # 56
-        self.decoder_2_b3 = ResBlock(256, 256)  # 56
-        self.decoder_2_out = nn.Conv2d(256, 1, 3, padding=1)
+        self.decoder_2_b = ResBlock(256, 256)  # 56
         self.decoder_2_c = ConvBlock(256, 128, has_relu=True)  # 56
 
         # Decoder 3
-        self.decoder_3_b1 = ResBlock(128, 128)  # 112
-        self.decoder_3_b2 = ResBlock(128, 128)  # 112
-        self.decoder_3_b3 = ResBlock(128, 128)  # 112
-        self.decoder_3_out = nn.Conv2d(128, 1, 3, padding=1) # 112
+        self.decoder_3_b = ResBlock(128, 128)  # 112
+        self.decoder_3_out = nn.Conv2d(128, 1, 3, padding=1, bias=False)  # 112
         pass
 
     def forward(self, x):
@@ -346,93 +348,100 @@ class BASNet(nn.Module):
         # 1
         mic_1_feature = self.mic_1_b3(self.mic_1_b2(self.mic_1_b1(e4)))  # 512 * 28 * 28
         mic_1 = self.mic_1_c1(mic_1_feature)  # 128 * 28 * 28
-        smc_logits_1, smc_l2norm_1, smc_sigmoid_1 = self.salient_map_clustering(mic_1)
-        cam_1 = self.cluster_activation_map(smc_logits_1, mic_1)  # 簇激活图：Cluster Activation Map
-        return_m1 = {"smc_logits": smc_logits_1, "smc_l2norm": smc_l2norm_1, "smc_sigmoid": smc_sigmoid_1, "cam": cam_1}
+        smc_logits_1, smc_l2norm_1 = self.salient_map_clustering(mic_1)
+        return_m1 = {"smc_logits": smc_logits_1, "smc_l2norm": smc_l2norm_1}
 
         # 2
         mic_2_feature = self.mic_2_b3(self.mic_2_b2(self.mic_2_b1(mic_1_feature)))  # 512 * 14 * 14
         mic_2 = self.mic_2_c1(mic_2_feature)  # 256 * 14 * 14
-        smc_logits_2, smc_l2norm_2, smc_sigmoid_2 = self.salient_map_clustering(mic_2)
-        cam_2 = self.cluster_activation_map(smc_logits_2, mic_2)  # 簇激活图：Cluster Activation Map
-        return_m2 = {"smc_logits": smc_logits_2, "smc_l2norm": smc_l2norm_2, "smc_sigmoid": smc_sigmoid_2, "cam": cam_2}
+        smc_logits_2, smc_l2norm_2 = self.salient_map_clustering(mic_2)
+        return_m2 = {"smc_logits": smc_logits_2, "smc_l2norm": smc_l2norm_2}
 
         # 3
         mic_3_feature = self.mic_3_b3(self.mic_3_b2(self.mic_3_b1(mic_2_feature)))  # 512 * 7 * 7
         mic_3 = self.mic_3_c1(mic_3_feature)  # 512 * 7 * 7
-        smc_logits_3, smc_l2norm_3, smc_sigmoid_3 = self.salient_map_clustering(mic_3)
-        cam_3 = self.cluster_activation_map(smc_logits_3, mic_3)  # 簇激活图：Cluster Activation Map
-        return_m3 = {"smc_logits": smc_logits_3, "smc_l2norm": smc_l2norm_3, "smc_sigmoid": smc_sigmoid_3, "cam": cam_3}
+        smc_logits_3, smc_l2norm_3 = self.salient_map_clustering(mic_3)
+        return_m3 = {"smc_logits": smc_logits_3, "smc_l2norm": smc_l2norm_3}
 
         # -------------Label-------------
-        cam_norm_1_up = self._up_to_target(cam_1, x_for_up)
-        cam_norm_2_up = self._up_to_target(cam_2, cam_norm_1_up)
-        cam_norm_3_up = self._up_to_target(cam_3, cam_norm_1_up)
-        cam_norm_up = (cam_norm_1_up + cam_norm_2_up + cam_norm_3_up) / 3
-        return_l = {"cam_norm_up": cam_norm_up, "cam_norm_1_up": cam_norm_1_up,
-                    "cam_norm_2_up": cam_norm_2_up, "cam_norm_3_up": cam_norm_3_up}
+        cam_1 = self.cluster_activation_map(smc_logits_1, mic_1)  # 簇激活图：Cluster Activation Map
+        cam_1_up = self._up_to_target(cam_1, x_for_up)
+        cam_1_up_norm = self._feature_norm(cam_1_up)
+
+        cam_2 = self.cluster_activation_map(smc_logits_2, mic_2)  # 簇激活图：Cluster Activation Map
+        cam_2_up = self._up_to_target(cam_2, cam_1_up)
+        cam_2_up_norm = self._feature_norm(cam_2_up)
+
+        cam_3 = self.cluster_activation_map(smc_logits_3, mic_3)  # 簇激活图：Cluster Activation Map
+        cam_3_up = self._up_to_target(cam_3, cam_1_up)
+        cam_3_up_norm = self._feature_norm(cam_3_up)
+
+        cam_up_norm = (cam_1_up_norm + cam_2_up_norm + cam_3_up_norm) / 3
+
+        label = self.salient_map_divide(cam_up_norm, obj_th=0.7, bg_th=0.3, more_obj=False)  # 显著图划分
+
+        return_l = {"label": label, "cam_up_norm": cam_up_norm, "cam_1_up_norm": cam_1_up_norm,
+                    "cam_2_up_norm": cam_2_up_norm, "cam_3_up_norm": cam_3_up_norm}
 
         # -------------Decoder-------------
-        # d1
-        d1 = self.decoder_1_b3(self.decoder_1_b2(self.decoder_1_b1(e4)))  # 512 * 28 * 28
-        d1_out = self.decoder_1_out(d1)  # 1 * 28 * 28
-        d1_out_up = self._up_to_target(d1_out, x_for_up)  # 1 * 224 * 224
-        d1_out_sigmoid = torch.sigmoid(d1_out)  # 1 * 28 * 28  # 小输出
-        d1_out_up_sigmoid = torch.sigmoid(d1_out_up)  # 1 * 224 * 224  # 大输出
-        return_d1 = {"out": d1_out,  "out_sigmoid": d1_out_sigmoid,
-                     "out_up": d1_out_up, "out_up_sigmoid": d1_out_up_sigmoid}
-
+        # decoder
+        d1 = self.decoder_1_b(e4)  # 512 * 28 * 28
         d1_d2 = self._up_to_target(self.decoder_1_c(d1), e3) + e3  # 512 * 56 * 56
 
-        # d2
-        d2 = self.decoder_2_b3(self.decoder_2_b2(self.decoder_2_b1(d1_d2)))  # 256 * 56 * 56
-        d2_out = self.decoder_2_out(d2)  # 1 * 56 * 56
-        d2_out_up = self._up_to_target(d2_out, x_for_up)  # 1 * 224 * 224
-        d2_out_sigmoid = torch.sigmoid(d2_out)  # 1 * 56 * 56  # 小输出
-        d2_out_up_sigmoid = torch.sigmoid(d2_out_up)  # 1 * 224 * 224  # 大输出
-        return_d2 = {"out": d2_out,  "out_sigmoid": d2_out_sigmoid,
-                     "out_up": d2_out_up, "out_up_sigmoid": d2_out_up_sigmoid}
-
+        d2 = self.decoder_2_b(d1_d2)  # 256 * 56 * 56
         d2_d3 = self._up_to_target(self.decoder_2_c(d2), e2) + e2  # 128 * 112 * 112
 
         # d3
-        d3 = self.decoder_3_b3(self.decoder_3_b2(self.decoder_3_b1(d2_d3)))  # 128 * 112 * 112
+        d3 = self.decoder_3_b(d2_d3)  # 128 * 112 * 112
         d3_out = self.decoder_3_out(d3)  # 1 * 112 * 112
-        d3_out_up = self._up_to_target(d3_out, x_for_up)  # 1 * 224 * 224
         d3_out_sigmoid = torch.sigmoid(d3_out)  # 1 * 112 * 112  # 小输出
+        d3_out_up = self._up_to_target(d3_out, x_for_up)  # 1 * 224 * 224
         d3_out_up_sigmoid = torch.sigmoid(d3_out_up)  # 1 * 224 * 224  # 大输出
         return_d3 = {"out": d3_out, "out_sigmoid": d3_out_sigmoid,
                      "out_up": d3_out_up, "out_up_sigmoid": d3_out_up_sigmoid}
 
-        d_out_up_sigmoid_1 = torch.sigmoid((d3_out_up + d3_out_up + d3_out_up) / 3)
-        d_out_up_sigmoid_2 = (d1_out_up_sigmoid + d2_out_up_sigmoid + d3_out_up_sigmoid) / 3
-        output = {"output_1": d_out_up_sigmoid_1, "output_2": d_out_up_sigmoid_2}
+        output = {"output": d3_out_up_sigmoid}
 
         return_m = {"m1": return_m1, "m2": return_m2, "m3": return_m3}
         return_l = {"label": return_l, "output": output}
-        return_d = {"d1": return_d1, "d2": return_d2, "d3": return_d3}
+        return_d = {"d3": return_d3}
         return return_m, return_l, return_d
 
     def salient_map_clustering(self, mic):
-        smc_logits = F.adaptive_avg_pool2d(mic, 1).view((mic.size()[0], -1))  # 512
-
+        smc_logits = F.adaptive_avg_pool2d(mic, output_size=(1, 1)).view((mic.size()[0], -1))
         smc_l2norm = self.mic_l2norm(smc_logits)
-        smc_sigmoid = torch.sigmoid(smc_logits)
-        return smc_logits, smc_l2norm, smc_sigmoid
-
-    def cluster_activation_map(self, smc_logits, mic_feature):
-        top_k_value, top_k_index = torch.topk(smc_logits, 1, 1)
-        cam = torch.cat([mic_feature[i:i+1, top_k_index[i], :, :] for i in range(mic_feature.size()[0])])
-        cam_norm = self._feature_norm(cam)
-        return cam_norm
+        return smc_logits, smc_l2norm
 
     @staticmethod
-    def _feature_norm(feature_map):
-        feature_shape = feature_map.size()
-        batch_min, _ = torch.min(feature_map.view((feature_shape[0], -1)), dim=-1, keepdim=True)
-        batch_max, _ = torch.max(feature_map.view((feature_shape[0], -1)), dim=-1, keepdim=True)
-        norm = torch.div(feature_map.view((feature_shape[0], -1)) - batch_min, batch_max - batch_min)
-        return norm.view(feature_shape)
+    def cluster_activation_map(smc_logits, mic_feature):
+        top_k_value, top_k_index = torch.topk(smc_logits, 1, 1)
+        cam = torch.cat([mic_feature[i:i+1, top_k_index[i], :, :] for i in range(mic_feature.size()[0])])
+        return cam
+
+    def salient_map_divide(self, cam_up_sigmoid, obj_th=0.7, bg_th=0.2, more_obj=False):
+        cam_up_sigmoid = self._feature_norm(cam_up_sigmoid)
+
+        input_size = tuple(cam_up_sigmoid.size())
+        label = torch.zeros(input_size).fill_(255).cuda()
+
+        # bg
+        label[cam_up_sigmoid < bg_th] = 0.0
+
+        # obj
+        if more_obj:
+            for i in range(input_size[0]):
+                mask_pos_i = cam_up_sigmoid[i] > obj_th
+                if torch.sum(mask_pos_i) < input_size[-1] * input_size[-2] / 22:
+                    mask_pos_i = cam_up_sigmoid[i] > (obj_th * 0.9)
+                    pass
+                label[i][mask_pos_i] = 1.0
+                pass
+            pass
+        else:
+            label[cam_up_sigmoid > obj_th] = 1.0
+            pass
+
+        return label
 
     @staticmethod
     def _up_to_target(source, target):
@@ -441,6 +450,14 @@ class BASNet(nn.Module):
                 source, size=[target.size()[2], target.size()[3]], mode='bilinear', align_corners=False)
             pass
         return source
+
+    @staticmethod
+    def _feature_norm(feature_map):
+        feature_shape = feature_map.size()
+        batch_min, _ = torch.min(feature_map.view((feature_shape[0], -1)), dim=-1, keepdim=True)
+        batch_max, _ = torch.max(feature_map.view((feature_shape[0], -1)), dim=-1, keepdim=True)
+        norm = torch.div(feature_map.view((feature_shape[0], -1)) - batch_min, batch_max - batch_min)
+        return norm.view(feature_shape)
 
     pass
 
@@ -452,7 +469,7 @@ class BASNet(nn.Module):
 class BASRunner(object):
 
     def __init__(self, batch_size_train=8, clustering_num_1=128, clustering_num_2=256, clustering_num_3=512,
-                 clustering_ratio_1=1, clustering_ratio_2=1.5, clustering_ratio_3=2, only_mic=False,
+                 clustering_ratio_1=1, clustering_ratio_2=1.5, clustering_ratio_3=2, only_mic=False, has_history=False,
                  data_dir='/mnt/4T/Data/SOD/DUTS/DUTS-TR', tra_image_dir='DUTS-TR-Image',
                  tra_label_dir='DUTS-TR-Mask', model_dir="./saved_models/my_train_mic_only",
                  history_dir="./history/my_train_mic5_large_history1"):
@@ -468,6 +485,9 @@ class BASRunner(object):
         self.tra_image_dir = tra_image_dir
         self.tra_label_dir = tra_label_dir
         self.tra_img_name_list, tra_lbl_name_list, self.tra_his_name_list = self.get_tra_img_label_name()
+
+        self.has_history = has_history
+        self.tra_his_name_list = self.tra_his_name_list if self.has_history else None
         self.dataset_usod = DatasetUSOD(img_name_list=self.tra_img_name_list,
                                         his_name_list=self.tra_his_name_list, is_train=True)
         self.dataloader_usod = DataLoader(self.dataset_usod, self.batch_size_train, shuffle=True, num_workers=8)
@@ -501,12 +521,12 @@ class BASRunner(object):
         self.produce_class22.init()
         self.produce_class32.init()
 
-        # Loss and Optim
+        # Loss and optimizer
         self.bce_loss = nn.BCELoss().cuda()
         self.mic_loss = nn.CrossEntropyLoss().cuda()
-        self.learning_rate = [[0, 0.01], [400, 0.001]]
+        self.learning_rate = [[0, 0.01], [300, 0.001], [400, 0.0001]]
         self.optimizer = optim.Adam(self.net.parameters(),
-                                    lr=self.learning_rate[0][1], betas=(0.9, 0.999), weight_decay=0)
+                                    lr=self.learning_rate[0][1], betas=(0.9, 0.999), weight_decay=1e-4)
         pass
 
     def _adjust_learning_rate(self, epoch):
@@ -543,16 +563,17 @@ class BASRunner(object):
         loss_mic_2 = self.mic_loss(mic_2_out, mic_labels_2)
         loss_mic_3 = self.mic_loss(mic_3_out, mic_labels_3)
 
-        loss_bce = self.bce_loss(sod_output, sod_label)
+        positions = sod_label.view(-1, 1) < 255.0
+        loss_bce = self.bce_loss(sod_output.view(-1, 1)[positions], sod_label.view(-1, 1)[positions])
 
         loss_all = loss_mic_1 + loss_mic_2 + loss_mic_3
         if not only_mic:
-            loss_all = loss_all + loss_bce
+            loss_all = loss_all + 10 * loss_bce
             pass
         return loss_all, [loss_mic_1, loss_mic_2, loss_mic_3], loss_bce
 
-    def save_history_info(self, historys, params, indexes):
-        for history, param, index in zip(historys, params, indexes):
+    def save_history_info(self, histories, params, indexes):
+        for history, param, index in zip(histories, params, indexes):
             self.dataset_usod.save_history(idx=int(index),
                                            his=np.asarray(history.squeeze().detach().cpu()), param=np.asarray(param))
         pass
@@ -566,7 +587,7 @@ class BASRunner(object):
             self.produce_class21.reset()
             self.produce_class31.reset()
             with torch.no_grad():
-                for _idx, (inputs, historys, params, indexes) in tqdm(enumerate(self.dataloader_usod),
+                for _idx, (inputs, histories, params, indexes) in tqdm(enumerate(self.dataloader_usod),
                                                                       total=len(self.dataloader_usod)):
                     inputs = inputs.type(torch.FloatTensor).cuda()
                     indexes = indexes.cuda()
@@ -611,32 +632,43 @@ class BASRunner(object):
             self.produce_class21.reset()
             self.produce_class31.reset()
 
-            for i, (inputs, historys, params, indexes) in tqdm(enumerate(self.dataloader_usod),
-                                                               total=len(self.dataloader_usod)):
+            for i, (inputs, histories, params, indexes) in tqdm(enumerate(self.dataloader_usod),
+                                                                total=len(self.dataloader_usod)):
                 inputs = inputs.type(torch.FloatTensor).cuda()
-                historys = historys.type(torch.FloatTensor).cuda()
+                histories = histories.type(torch.FloatTensor).cuda()
                 indexes = indexes.cuda()
                 self.optimizer.zero_grad()
 
-                return_m, return_l, return_d = self.net(inputs)
+                return_m, return_l, _ = self.net(inputs)
 
+                ######################################################################################################
+                # MIC
                 self.produce_class11.cal_label(return_m["m1"]["smc_logits"], indexes)
                 self.produce_class21.cal_label(return_m["m2"]["smc_logits"], indexes)
                 self.produce_class31.cal_label(return_m["m3"]["smc_logits"], indexes)
-                mic_labels_1 = self.produce_class12.get_label(indexes).cuda()
-                mic_labels_2 = self.produce_class22.get_label(indexes).cuda()
-                mic_labels_3 = self.produce_class32.get_label(indexes).cuda()
-
                 mic_target_1 = return_m["m1"]["smc_logits"]
                 mic_target_2 = return_m["m2"]["smc_logits"]
                 mic_target_3 = return_m["m3"]["smc_logits"]
-                sod_cam_norm_up = return_l["label"]["cam_norm_up"].detach()
-                sod_output = return_l["output"]["output_2"]
+                mic_labels_1 = self.produce_class12.get_label(indexes).cuda()
+                mic_labels_2 = self.produce_class22.get_label(indexes).cuda()
+                mic_labels_3 = self.produce_class32.get_label(indexes).cuda()
+                ######################################################################################################
 
                 ######################################################################################################
-                # 历史信息 = 历史信息 + CAM
-                sod_label = sod_cam_norm_up if historys.max() == 0 else (historys * 0.5 + sod_cam_norm_up * 0.5)
-                self.save_history_info(historys=sod_label, params=params, indexes=indexes)
+                # SOD
+                sod_label = return_l["label"]["label"].detach()
+                sod_output = return_l["output"]["output"]
+
+                if self.has_history:
+                    # NO History
+                    histories = sod_output
+
+                    # 历史信息 = 历史信息 + CAM + SOD
+                    # sod_label = sod_label if histories.max() == 0 else (histories * 0.5 + sod_label * 0.5)
+                    # histories = sod_label * 2 / 3 + sod_output * 1 / 3
+
+                    self.save_history_info(histories=histories, params=params, indexes=indexes)
+                    pass
                 ######################################################################################################
 
                 loss, loss_mic, loss_sod = self.all_loss_fusion(
@@ -653,15 +685,16 @@ class BASRunner(object):
                 if i % print_ite_num == 0:
                     Tools.print("[E:{:4d}/{:4d}, b:{:4d}/{:4d}] l:{:.2f}/{:.2f} "
                                 "mic1:{:.2f}/{:.2f} mic2:{:.2f}/{:.2f} mic3:{:.2f}/{:.2f} "
-                                "sod:{:.2f}/{:.2f}".format(
-                        epoch, epoch_num, i, len(self.dataloader_usod), all_loss/(i+1), loss.item(),
-                        all_loss_mic_1/(i+1), loss_mic[0].item(), all_loss_mic_2/(i+1), loss_mic[1].item(),
-                        all_loss_mic_3/(i+1), loss_mic[2].item(), all_loss_sod/(i+1), loss_sod.item()))
+                                "sod:{:.2f}/{:.2f}".format(epoch, epoch_num, i, len(self.dataloader_usod),
+                                                           all_loss/(i+1), loss.item(), all_loss_mic_1/(i+1),
+                                                           loss_mic[0].item(), all_loss_mic_2/(i+1),
+                                                           loss_mic[1].item(), all_loss_mic_3/(i+1),
+                                                           loss_mic[2].item(), all_loss_sod/(i+1), loss_sod.item()))
                     pass
 
                 pass
 
-            Tools.print("[E:{:3d}/{:3d}] loss:{:.3f} mic 1:{:.3f} mic2:{:.3f} mic3:{:.3f} sod:{:.3f}".format(
+            Tools.print("[E:{:3d}/{:3d}] loss:{:.3f} mic1:{:.3f} mic2:{:.3f} mic3:{:.3f} sod:{:.3f}".format(
                 epoch, epoch_num, all_loss / (len(self.dataloader_usod) + 1),
                 all_loss_mic_1 / (len(self.dataloader_usod) + 1),
                 all_loss_mic_2 / (len(self.dataloader_usod) + 1),
@@ -790,11 +823,12 @@ class BASRunner(object):
 
 if __name__ == '__main__':
     os.environ["CUDA_VISIBLE_DEVICES"] = "1, 2, 3"
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
-    bas_runner = BASRunner(batch_size_train=16 * 2, data_dir="/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR",
+    bas_runner = BASRunner(batch_size_train=16 * 4, data_dir="/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR",
                            clustering_num_1=128 * 4, clustering_num_2=128 * 4, clustering_num_3=128 * 4,
-                           history_dir="../BASNetTemp/history/my_train_mic5_large_history2",
+                           history_dir="../BASNetTemp/history/my_train_mic5_large_history2", has_history=False,
                            model_dir="../BASNetTemp/saved_models/my_train_mic5_large_history2")
-    bas_runner.load_model('../BASNetTemp/saved_models/my_train_mic5_large_history1/270_train_32.789.pth')
+    # bas_runner.load_model('../BASNetTemp/saved_models/my_train_mic5_large/500_train_0.880.pth')
     bas_runner.train(epoch_num=500, start_epoch=0)
     pass
