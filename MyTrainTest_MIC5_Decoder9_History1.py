@@ -376,9 +376,12 @@ class BASNet(nn.Module):
         cam_3_up = self._up_to_target(cam_3, cam_1_up)
         cam_3_up_norm = self._feature_norm(cam_3_up)
 
-        cam_up_norm = (cam_1_up_norm + cam_2_up_norm + cam_3_up_norm) / 3
+        # cam_up_norm = (cam_1_up_norm + cam_2_up_norm + cam_3_up_norm) / 3
+        # cam_up_norm = (cam_1_up_norm + cam_2_up_norm) / 2
+        cam_up_norm = cam_1_up_norm
 
-        label = self.salient_map_divide(cam_up_norm, obj_th=0.7, bg_th=0.3, more_obj=False)  # 显著图划分
+        # label = self.salient_map_divide(cam_up_norm, obj_th=0.8, bg_th=0.2, more_obj=False)  # 显著图划分
+        label = cam_up_norm
 
         return_l = {"label": label, "cam_up_norm": cam_up_norm, "cam_1_up_norm": cam_1_up_norm,
                     "cam_2_up_norm": cam_2_up_norm, "cam_3_up_norm": cam_3_up_norm}
@@ -490,7 +493,7 @@ class BASRunner(object):
         self.tra_his_name_list = self.tra_his_name_list if self.has_history else None
         self.dataset_usod = DatasetUSOD(img_name_list=self.tra_img_name_list,
                                         his_name_list=self.tra_his_name_list, is_train=True)
-        self.dataloader_usod = DataLoader(self.dataset_usod, self.batch_size_train, shuffle=True, num_workers=8)
+        self.dataloader_usod = DataLoader(self.dataset_usod, self.batch_size_train, shuffle=True, num_workers=32)
 
         # Model
         self.net = BASNet(3, clustering_num_list=[clustering_num_1, clustering_num_2, clustering_num_3])
@@ -524,20 +527,19 @@ class BASRunner(object):
         # Loss and optimizer
         self.bce_loss = nn.BCELoss().cuda()
         self.mic_loss = nn.CrossEntropyLoss().cuda()
-        self.learning_rate = [[0, 0.01], [300, 0.001], [400, 0.0001]]
+        self.learning_rate = [[0, 0.001], [300, 0.0001], [400, 0.00001]]
         self.optimizer = optim.Adam(self.net.parameters(),
                                     lr=self.learning_rate[0][1], betas=(0.9, 0.999), weight_decay=1e-4)
         pass
 
     def _adjust_learning_rate(self, epoch):
-        learning_rate = self.learning_rate[0][1]
         for param_group in self.optimizer.param_groups:
             for lr in self.learning_rate:
                 if epoch == lr[0]:
                     learning_rate = lr[1]
                     param_group['lr'] = learning_rate
             pass
-        return learning_rate
+        pass
 
     def load_model(self, model_file_name):
         checkpoint = torch.load(model_file_name)
@@ -556,6 +558,11 @@ class BASRunner(object):
         Tools.print("train labels: {}".format(len(tra_lbl_name_list)))
         Tools.print("train history: {}".format(len(tra_his_name_list)))
         return tra_img_name_list, tra_lbl_name_list, tra_his_name_list
+
+    @staticmethod
+    def sigmoid(x, a=10):
+        return 1 / (1 + torch.exp(-(x - a)))
+        pass
 
     def all_loss_fusion(self, mic_1_out, mic_2_out, mic_3_out, mic_labels_1, mic_labels_2, mic_labels_3,
                         sod_output, sod_label, only_mic=False):
@@ -578,7 +585,7 @@ class BASRunner(object):
                                            his=np.asarray(history.squeeze().detach().cpu()), param=np.asarray(param))
         pass
 
-    def train(self, epoch_num=200, start_epoch=0, save_epoch_freq=10, print_ite_num=100, eval_epoch_freq=10):
+    def train(self, epoch_num=200, start_epoch=0, save_epoch_freq=10, print_ite_num=50, eval_epoch_freq=10):
 
         if start_epoch > 0:
             self.net.eval()
@@ -588,7 +595,7 @@ class BASRunner(object):
             self.produce_class31.reset()
             with torch.no_grad():
                 for _idx, (inputs, histories, params, indexes) in tqdm(enumerate(self.dataloader_usod),
-                                                                      total=len(self.dataloader_usod)):
+                                                                       total=len(self.dataloader_usod)):
                     inputs = inputs.type(torch.FloatTensor).cuda()
                     indexes = indexes.cuda()
 
@@ -608,19 +615,19 @@ class BASRunner(object):
             classes = self.produce_class32.classes
             self.produce_class32.classes = self.produce_class31.classes
             self.produce_class31.classes = classes
-            Tools.print("Train: [{}] 1-{}/{}".format(start_epoch, self.produce_class11.count,
-                                                     self.produce_class11.count_2))
-            Tools.print("Train: [{}] 2-{}/{}".format(start_epoch, self.produce_class21.count,
-                                                     self.produce_class21.count_2))
-            Tools.print("Train: [{}] 3-{}/{}".format(start_epoch, self.produce_class31.count,
-                                                     self.produce_class31.count_2))
+            Tools.print("Update: [{}] 1-{}/{}".format(start_epoch, self.produce_class11.count,
+                                                      self.produce_class11.count_2))
+            Tools.print("Update: [{}] 2-{}/{}".format(start_epoch, self.produce_class21.count,
+                                                      self.produce_class21.count_2))
+            Tools.print("Update: [{}] 3-{}/{}".format(start_epoch, self.produce_class31.count,
+                                                      self.produce_class31.count_2))
             pass
 
         all_loss = 0
         for epoch in range(start_epoch, epoch_num):
             Tools.print()
-            lr = self._adjust_learning_rate(epoch)
-            Tools.print('Epoch:{:03d}, lr={:.5f} lr={:.5f}'.format(epoch, lr, self.optimizer.param_groups[0]['lr']))
+            self._adjust_learning_rate(epoch)
+            Tools.print('Epoch:{:03d}, lr={:.5f}'.format(epoch, self.optimizer.param_groups[0]['lr']))
 
             ###########################################################################
             # 1 训练模型
@@ -656,16 +663,19 @@ class BASRunner(object):
 
                 ######################################################################################################
                 # SOD
-                sod_label = return_l["label"]["label"].detach()
-                sod_output = return_l["output"]["output"]
+                histories = histories  # Annotation
+                sod_label = return_l["label"]["label"].detach()  # CAM
+                sod_output = return_l["output"]["output"]  # Predict
 
                 if self.has_history:
                     # NO History
-                    histories = sod_output
+                    # histories = (histories + sod_output) / 2
 
                     # 历史信息 = 历史信息 + CAM + SOD
-                    # sod_label = sod_label if histories.max() == 0 else (histories * 0.5 + sod_label * 0.5)
+                    sod_label = self.sigmoid(sod_label * 20, a=12)
+                    sod_label = sod_label if histories.max() == 0 else (histories * 0.5 + sod_label * 0.5)
                     # histories = sod_label * 2 / 3 + sod_output * 1 / 3
+                    histories = sod_label
 
                     self.save_history_info(histories=histories, params=params, indexes=indexes)
                     pass
@@ -822,13 +832,13 @@ class BASRunner(object):
 
 
 if __name__ == '__main__':
-    os.environ["CUDA_VISIBLE_DEVICES"] = "1, 2, 3"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
     # os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
-    bas_runner = BASRunner(batch_size_train=16 * 4, data_dir="/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR",
+    bas_runner = BASRunner(batch_size_train=16 * 5, data_dir="/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR",
                            clustering_num_1=128 * 4, clustering_num_2=128 * 4, clustering_num_3=128 * 4,
-                           history_dir="../BASNetTemp/history/my_train_mic5_large_history2", has_history=False,
-                           model_dir="../BASNetTemp/saved_models/my_train_mic5_large_history2")
-    # bas_runner.load_model('../BASNetTemp/saved_models/my_train_mic5_large/500_train_0.880.pth')
-    bas_runner.train(epoch_num=500, start_epoch=0)
+                           history_dir="../BASNetTemp/history/my_train_mic5_large_history9_1", has_history=True,
+                           model_dir="../BASNetTemp/saved_models/my_train_mic5_large_history9_1")
+    bas_runner.load_model('../BASNetTemp/saved_models/my_train_mic5_large/500_train_0.880.pth')
+    bas_runner.train(epoch_num=500, start_epoch=1)
     pass
