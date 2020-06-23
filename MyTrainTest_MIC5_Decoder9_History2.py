@@ -284,9 +284,9 @@ class MICProduceClass(object):
 
 class BASNet(nn.Module):
 
-    def __init__(self, n_channels, clustering_num_list):
+    def __init__(self, n_channels, clustering_num):
         super(BASNet, self).__init__()
-        self.clustering_num_list = clustering_num_list
+        self.clustering_num = clustering_num
 
         resnet = models.resnet18(pretrained=False)
 
@@ -299,39 +299,20 @@ class BASNet(nn.Module):
 
         # -------------MIC-------------
         self.mic_l2norm = MICNormalize(2)
+        self.mic_pool = nn.MaxPool2d(2, 2, ceil_mode=True)
 
         # MIC 1
-        self.mic_1_b1 = ResBlock(512, 512)  # 28
-        self.mic_1_b2 = ResBlock(512, 512)
-        self.mic_1_b3 = ResBlock(512, 512)
-        self.mic_1_c1 = ConvBlock(512, self.clustering_num_list[0], has_relu=True)
-
-        # MIC 2
-        self.mic_3_pool = nn.MaxPool2d(2, 2, ceil_mode=True)
-        self.mic_2_b1 = ResBlock(512, 512)  # 14
-        self.mic_2_b2 = ResBlock(512, 512)
-        self.mic_2_b3 = ResBlock(512, 512)
-        self.mic_2_c1 = ConvBlock(512, self.clustering_num_list[1], has_relu=True)
-
-        # MIC 3
-        self.mic_3_pool = nn.MaxPool2d(2, 2, ceil_mode=True)
-        self.mic_3_b1 = ResBlock(512, 512)  # 7
-        self.mic_3_b2 = ResBlock(512, 512)
-        self.mic_3_b3 = ResBlock(512, 512)
-        self.mic_3_c1 = ConvBlock(512, self.clustering_num_list[2], has_relu=True)
+        self.mic_b1 = ResBlock(512, 512)  # 28
+        self.mic_b2 = ResBlock(512, 512)
+        self.mic_b3 = ResBlock(512, 512)
+        self.mic_c1 = ConvBlock(512, self.clustering_num, has_relu=True)
 
         # -------------Decoder-------------
         # Decoder 1
-        self.decoder_1_b = ResBlock(512, 512)  # 28
-        self.decoder_1_c = ConvBlock(512, 256, has_relu=True)  # 28
-
-        # Decoder 2
-        self.decoder_2_b = ResBlock(256, 256)  # 56
-        self.decoder_2_c = ConvBlock(256, 128, has_relu=True)  # 56
-
-        # Decoder 3
-        self.decoder_3_b = ResBlock(128, 128)  # 112
-        self.decoder_3_out = nn.Conv2d(128, 1, 3, padding=1, bias=False)  # 112
+        self.decoder_b1 = ResBlock(512, 512)  # 28
+        self.decoder_b2 = ResBlock(512, 512)  # 28
+        self.decoder_b3 = ResBlock(512, 512)  # 28
+        self.decoder_out = nn.Conv2d(512, 1, 3, padding=1, bias=False)  # 28
         pass
 
     def forward(self, x):
@@ -346,69 +327,34 @@ class BASNet(nn.Module):
 
         # -------------MIC-------------
         # 1
-        mic_1_feature = self.mic_1_b3(self.mic_1_b2(self.mic_1_b1(e4)))  # 512 * 28 * 28
-        mic_1 = self.mic_1_c1(mic_1_feature)  # 128 * 28 * 28
-        smc_logits_1, smc_l2norm_1 = self.salient_map_clustering(mic_1)
-        return_m1 = {"smc_logits": smc_logits_1, "smc_l2norm": smc_l2norm_1}
-
-        # 2
-        mic_2_feature = self.mic_2_b3(self.mic_2_b2(self.mic_2_b1(mic_1_feature)))  # 512 * 14 * 14
-        mic_2 = self.mic_2_c1(mic_2_feature)  # 256 * 14 * 14
-        smc_logits_2, smc_l2norm_2 = self.salient_map_clustering(mic_2)
-        return_m2 = {"smc_logits": smc_logits_2, "smc_l2norm": smc_l2norm_2}
-
-        # 3
-        mic_3_feature = self.mic_3_b3(self.mic_3_b2(self.mic_3_b1(mic_2_feature)))  # 512 * 7 * 7
-        mic_3 = self.mic_3_c1(mic_3_feature)  # 512 * 7 * 7
-        smc_logits_3, smc_l2norm_3 = self.salient_map_clustering(mic_3)
-        return_m3 = {"smc_logits": smc_logits_3, "smc_l2norm": smc_l2norm_3}
+        mic_feature = self.mic_b3(self.mic_b2(self.mic_b1(e4)))  # 512 * 28 * 28
+        mic = self.mic_c1(mic_feature)  # 128 * 28 * 28
+        smc_logits, smc_l2norm = self.salient_map_clustering(mic)
+        result = {"smc_logits": smc_logits, "smc_l2norm": smc_l2norm}
 
         # -------------Label-------------
-        cam_1 = self.cluster_activation_map(smc_logits_1, mic_1)  # 簇激活图：Cluster Activation Map
-        cam_1_up = self._up_to_target(cam_1, x_for_up)
-        cam_1_up_norm = self._feature_norm(cam_1_up)
-
-        cam_2 = self.cluster_activation_map(smc_logits_2, mic_2)  # 簇激活图：Cluster Activation Map
-        cam_2_up = self._up_to_target(cam_2, cam_1_up)
-        cam_2_up_norm = self._feature_norm(cam_2_up)
-
-        cam_3 = self.cluster_activation_map(smc_logits_3, mic_3)  # 簇激活图：Cluster Activation Map
-        cam_3_up = self._up_to_target(cam_3, cam_1_up)
-        cam_3_up_norm = self._feature_norm(cam_3_up)
-
-        # cam_up_norm = (cam_1_up_norm + cam_2_up_norm + cam_3_up_norm) / 3
-        # cam_up_norm = (cam_1_up_norm + cam_2_up_norm) / 2
-        cam_up_norm = cam_1_up_norm
+        cam = self.cluster_activation_map(smc_logits, mic)  # 簇激活图：Cluster Activation Map
+        cam_up = self._up_to_target(cam, x_for_up)
+        cam_up_norm = self._feature_norm(cam_up)
+        result["cam_up_norm"] = cam_up_norm
 
         # label = self.salient_map_divide(cam_up_norm, obj_th=0.8, bg_th=0.2, more_obj=False)  # 显著图划分
         label = cam_up_norm
-
-        return_l = {"label": label, "cam_up_norm": cam_up_norm, "cam_1_up_norm": cam_1_up_norm,
-                    "cam_2_up_norm": cam_2_up_norm, "cam_3_up_norm": cam_3_up_norm}
+        result["label"] = label
 
         # -------------Decoder-------------
         # decoder
-        d1 = self.decoder_1_b(e4)  # 512 * 28 * 28
-        d1_d2 = self._up_to_target(self.decoder_1_c(d1), e3) + e3  # 512 * 56 * 56
+        d = self.decoder_1_b3(self.decoder_1_b2(self.decoder_1_b1(e4)))  # 512 * 28 * 28
+        d_out = self.decoder_1_out(d)  # 1 * 28 * 28
+        d_out_sigmoid = torch.sigmoid(d_out)  # 1 * 28 * 28 # 小输出
+        d_out_up = self._up_to_target(d_out, x_for_up)  # 1 * 224 * 224
+        d_out_up_sigmoid = torch.sigmoid(d_out_up)  # 1 * 224 * 224  # 大输出
+        result["d_out"] = d_out
+        result["d_out_sigmoid"] = d_out_sigmoid
+        result["d_out_up"] = d_out_up
+        result["d_out_up_sigmoid"] = d_out_up_sigmoid
 
-        d2 = self.decoder_2_b(d1_d2)  # 256 * 56 * 56
-        d2_d3 = self._up_to_target(self.decoder_2_c(d2), e2) + e2  # 128 * 112 * 112
-
-        # d3
-        d3 = self.decoder_3_b(d2_d3)  # 128 * 112 * 112
-        d3_out = self.decoder_3_out(d3)  # 1 * 112 * 112
-        d3_out_sigmoid = torch.sigmoid(d3_out)  # 1 * 112 * 112  # 小输出
-        d3_out_up = self._up_to_target(d3_out, x_for_up)  # 1 * 224 * 224
-        d3_out_up_sigmoid = torch.sigmoid(d3_out_up)  # 1 * 224 * 224  # 大输出
-        return_d3 = {"out": d3_out, "out_sigmoid": d3_out_sigmoid,
-                     "out_up": d3_out_up, "out_up_sigmoid": d3_out_up_sigmoid}
-
-        output = {"output": d3_out_up_sigmoid}
-
-        return_m = {"m1": return_m1, "m2": return_m2, "m3": return_m3}
-        return_l = {"label": return_l, "output": output}
-        return_d = {"d3": return_d3}
-        return return_m, return_l, return_d
+        return result
 
     def salient_map_clustering(self, mic):
         smc_logits = F.adaptive_avg_pool2d(mic, output_size=(1, 1)).view((mic.size()[0], -1))
@@ -471,8 +417,7 @@ class BASNet(nn.Module):
 
 class BASRunner(object):
 
-    def __init__(self, batch_size_train=8, clustering_num_1=128, clustering_num_2=256, clustering_num_3=512,
-                 clustering_ratio_1=1, clustering_ratio_2=1.5, clustering_ratio_3=2, only_mic=False, has_history=False,
+    def __init__(self, batch_size_train=8, clustering_num=128, clustering_ratio=1, only_mic=False, has_history=False,
                  data_dir='/mnt/4T/Data/SOD/DUTS/DUTS-TR', tra_image_dir='DUTS-TR-Image',
                  tra_label_dir='DUTS-TR-Mask', model_dir="./saved_models/my_train_mic_only",
                  history_dir="./history/my_train_mic5_large_history1"):
@@ -496,7 +441,7 @@ class BASRunner(object):
         self.dataloader_usod = DataLoader(self.dataset_usod, self.batch_size_train, shuffle=True, num_workers=32)
 
         # Model
-        self.net = BASNet(3, clustering_num_list=[clustering_num_1, clustering_num_2, clustering_num_3])
+        self.net = BASNet(3, clustering_num=clustering_num)
 
         ###########################################################################
         if torch.cuda.is_available():
@@ -505,24 +450,12 @@ class BASRunner(object):
         ###########################################################################
 
         # MIC
-        self.produce_class11 = MICProduceClass(n_sample=len(self.dataset_usod),
-                                               out_dim=clustering_num_1, ratio=clustering_ratio_1)
-        self.produce_class21 = MICProduceClass(n_sample=len(self.dataset_usod),
-                                               out_dim=clustering_num_2, ratio=clustering_ratio_2)
-        self.produce_class31 = MICProduceClass(n_sample=len(self.dataset_usod),
-                                               out_dim=clustering_num_3, ratio=clustering_ratio_3)
-        self.produce_class12 = MICProduceClass(n_sample=len(self.dataset_usod),
-                                               out_dim=clustering_num_1, ratio=clustering_ratio_1)
-        self.produce_class22 = MICProduceClass(n_sample=len(self.dataset_usod),
-                                               out_dim=clustering_num_2, ratio=clustering_ratio_2)
-        self.produce_class32 = MICProduceClass(n_sample=len(self.dataset_usod),
-                                               out_dim=clustering_num_3, ratio=clustering_ratio_3)
-        self.produce_class11.init()
-        self.produce_class21.init()
-        self.produce_class31.init()
-        self.produce_class12.init()
-        self.produce_class22.init()
-        self.produce_class32.init()
+        self.produce_class1 = MICProduceClass(
+            n_sample=len(self.dataset_usod), out_dim=clustering_num, ratio=clustering_ratio)
+        self.produce_class2 = MICProduceClass(
+            n_sample=len(self.dataset_usod), out_dim=clustering_num, ratio=clustering_ratio)
+        self.produce_class1.init()
+        self.produce_class2.init()
 
         # Loss and optimizer
         self.bce_loss = nn.BCELoss().cuda()
@@ -562,22 +495,18 @@ class BASRunner(object):
     @staticmethod
     def sigmoid(x, a=10):
         return 1 / (1 + torch.exp(-(x - a)))
-        pass
 
-    def all_loss_fusion(self, mic_1_out, mic_2_out, mic_3_out, mic_labels_1, mic_labels_2, mic_labels_3,
-                        sod_output, sod_label, only_mic=False):
-        loss_mic_1 = self.mic_loss(mic_1_out, mic_labels_1)
-        loss_mic_2 = self.mic_loss(mic_2_out, mic_labels_2)
-        loss_mic_3 = self.mic_loss(mic_3_out, mic_labels_3)
+    def all_loss_fusion(self, mic_out, mic_label, sod_output, sod_label, only_mic=False):
+        loss_mic = self.mic_loss(mic_out, mic_label)
 
         positions = sod_label.view(-1, 1) < 255.0
         loss_bce = self.bce_loss(sod_output.view(-1, 1)[positions], sod_label.view(-1, 1)[positions])
 
-        loss_all = loss_mic_1 + loss_mic_2 + loss_mic_3
+        loss_all = loss_mic
         if not only_mic:
-            loss_all = loss_all + 10 * loss_bce
+            loss_all = loss_all + loss_bce
             pass
-        return loss_all, [loss_mic_1, loss_mic_2, loss_mic_3], loss_bce
+        return loss_all, loss_mic, loss_bce
 
     def save_history_info(self, histories, params, indexes):
         for history, param, index in zip(histories, params, indexes):
@@ -590,37 +519,23 @@ class BASRunner(object):
         if start_epoch > 0:
             self.net.eval()
             Tools.print("Update label {} .......".format(start_epoch))
-            self.produce_class11.reset()
-            self.produce_class21.reset()
-            self.produce_class31.reset()
+            self.produce_class1.reset()
             with torch.no_grad():
-                for _idx, (inputs, histories, params, indexes) in tqdm(enumerate(self.dataloader_usod),
-                                                                       total=len(self.dataloader_usod)):
+                for _idx, (inputs, histories, params, indexes) in tqdm(
+                        enumerate(self.dataloader_usod), total=len(self.dataloader_usod)):
                     inputs = inputs.type(torch.FloatTensor).cuda()
                     indexes = indexes.cuda()
 
-                    return_m, return_l, return_d = self.net(inputs)
+                    result = self.net(inputs)
 
-                    self.produce_class11.cal_label(return_m["m1"]["smc_l2norm"], indexes)
-                    self.produce_class21.cal_label(return_m["m2"]["smc_l2norm"], indexes)
-                    self.produce_class31.cal_label(return_m["m3"]["smc_l2norm"], indexes)
+                    self.produce_class1.cal_label(result["smc_l2norm"], indexes)
                     pass
                 pass
-            classes = self.produce_class12.classes
-            self.produce_class12.classes = self.produce_class11.classes
-            self.produce_class11.classes = classes
-            classes = self.produce_class22.classes
-            self.produce_class22.classes = self.produce_class21.classes
-            self.produce_class21.classes = classes
-            classes = self.produce_class32.classes
-            self.produce_class32.classes = self.produce_class31.classes
-            self.produce_class31.classes = classes
-            Tools.print("Update: [{}] 1-{}/{}".format(start_epoch, self.produce_class11.count,
-                                                      self.produce_class11.count_2))
-            Tools.print("Update: [{}] 2-{}/{}".format(start_epoch, self.produce_class21.count,
-                                                      self.produce_class21.count_2))
-            Tools.print("Update: [{}] 3-{}/{}".format(start_epoch, self.produce_class31.count,
-                                                      self.produce_class31.count_2))
+            classes = self.produce_class2.classes
+            self.produce_class2.classes = self.produce_class1.classes
+            self.produce_class1.classes = classes
+            Tools.print("Update: [{}] {}/{}".format(
+                start_epoch, self.produce_class1.count, self.produce_class1.count_2))
             pass
 
         all_loss = 0
@@ -631,48 +546,40 @@ class BASRunner(object):
 
             ###########################################################################
             # 1 训练模型
-            all_loss, all_loss_mic_1, all_loss_mic_2, all_loss_mic_3, all_loss_sod = 0.0, 0.0, 0.0, 0.0, 0.0
+            all_loss, all_loss_mic, all_loss_sod = 0.0, 0.0, 0.0
             Tools.print()
             self.net.train()
 
-            self.produce_class11.reset()
-            self.produce_class21.reset()
-            self.produce_class31.reset()
+            self.produce_class1.reset()
 
-            for i, (inputs, histories, params, indexes) in tqdm(enumerate(self.dataloader_usod),
-                                                                total=len(self.dataloader_usod)):
+            for i, (inputs, histories, params, indexes) in tqdm(
+                    enumerate(self.dataloader_usod), total=len(self.dataloader_usod)):
                 inputs = inputs.type(torch.FloatTensor).cuda()
                 histories = histories.type(torch.FloatTensor).cuda()
                 indexes = indexes.cuda()
                 self.optimizer.zero_grad()
 
-                return_m, return_l, _ = self.net(inputs)
+                result = self.net(inputs)
 
                 ######################################################################################################
                 # MIC
-                self.produce_class11.cal_label(return_m["m1"]["smc_logits"], indexes)
-                self.produce_class21.cal_label(return_m["m2"]["smc_logits"], indexes)
-                self.produce_class31.cal_label(return_m["m3"]["smc_logits"], indexes)
-                mic_target_1 = return_m["m1"]["smc_logits"]
-                mic_target_2 = return_m["m2"]["smc_logits"]
-                mic_target_3 = return_m["m3"]["smc_logits"]
-                mic_labels_1 = self.produce_class12.get_label(indexes).cuda()
-                mic_labels_2 = self.produce_class22.get_label(indexes).cuda()
-                mic_labels_3 = self.produce_class32.get_label(indexes).cuda()
+                self.produce_class1.cal_label(result["smc_logits"], indexes)
+                mic_target = result["smc_logits"]
+                mic_label = self.produce_class2.get_label(indexes).cuda()
                 ######################################################################################################
 
                 ######################################################################################################
                 # SOD
                 histories = histories  # Annotation
-                sod_label = return_l["label"]["label"].detach()  # CAM
-                sod_output = return_l["output"]["output"]  # Predict
+                sod_label = result["label"].detach()  # CAM
+                sod_output = result["d_out_up_sigmoid"]  # Predict
 
                 if self.has_history:
                     # NO History
                     # histories = (histories + sod_output) / 2
 
                     # 历史信息 = 历史信息 + CAM + SOD
-                    sod_label = self.sigmoid(sod_label * 20, a=12)
+                    # sod_label = self.sigmoid(sod_label * 20, a=12)
                     sod_label = sod_label if histories.max() == 0 else (histories * 0.5 + sod_label * 0.5)
                     # histories = sod_label * 2 / 3 + sod_output * 1 / 3
                     histories = sod_label
@@ -682,60 +589,33 @@ class BASRunner(object):
                 ######################################################################################################
 
                 loss, loss_mic, loss_sod = self.all_loss_fusion(
-                    mic_target_1, mic_target_2, mic_target_3, mic_labels_1, mic_labels_2, mic_labels_3,
-                    sod_output, sod_label, only_mic=self.only_mic)
+                    mic_target, mic_label, sod_output, sod_label, only_mic=self.only_mic)
                 loss.backward()
                 self.optimizer.step()
 
                 all_loss += loss.item()
-                all_loss_mic_1 += loss_mic[0].item()
-                all_loss_mic_2 += loss_mic[1].item()
-                all_loss_mic_3 += loss_mic[2].item()
+                all_loss_mic += loss_mic.item()
                 all_loss_sod += loss_sod.item()
                 if i % print_ite_num == 0:
                     Tools.print("[E:{:4d}/{:4d}, b:{:4d}/{:4d}] l:{:.2f}/{:.2f} "
-                                "mic1:{:.2f}/{:.2f} mic2:{:.2f}/{:.2f} mic3:{:.2f}/{:.2f} "
-                                "sod:{:.2f}/{:.2f}".format(epoch, epoch_num, i, len(self.dataloader_usod),
-                                                           all_loss/(i+1), loss.item(), all_loss_mic_1/(i+1),
-                                                           loss_mic[0].item(), all_loss_mic_2/(i+1),
-                                                           loss_mic[1].item(), all_loss_mic_3/(i+1),
-                                                           loss_mic[2].item(), all_loss_sod/(i+1), loss_sod.item()))
+                                "mic:{:.2f}/{:.2f} sod:{:.2f}/{:.2f}".format(
+                        epoch, epoch_num, i, len(self.dataloader_usod),  all_loss/(i+1), loss.item(),
+                        all_loss_mic/(i+1), loss_mic.item(), all_loss_sod/(i+1), loss_sod.item()))
                     pass
 
                 pass
 
-            Tools.print("[E:{:3d}/{:3d}] loss:{:.3f} mic1:{:.3f} mic2:{:.3f} mic3:{:.3f} sod:{:.3f}".format(
+            Tools.print("[E:{:3d}/{:3d}] loss:{:.3f} mic:{:.3f} sod:{:.3f}".format(
                 epoch, epoch_num, all_loss / (len(self.dataloader_usod) + 1),
-                all_loss_mic_1 / (len(self.dataloader_usod) + 1),
-                all_loss_mic_2 / (len(self.dataloader_usod) + 1),
-                all_loss_mic_3 / (len(self.dataloader_usod) + 1),
-                all_loss_sod / (len(self.dataloader_usod) + 1)))
+                all_loss_mic / (len(self.dataloader_usod) + 1), all_loss_sod / (len(self.dataloader_usod) + 1)))
 
-            classes = self.produce_class12.classes
-            self.produce_class12.classes = self.produce_class11.classes
-            self.produce_class11.classes = classes
-            classes = self.produce_class22.classes
-            self.produce_class22.classes = self.produce_class21.classes
-            self.produce_class21.classes = classes
-            classes = self.produce_class32.classes
-            self.produce_class32.classes = self.produce_class31.classes
-            self.produce_class31.classes = classes
-            Tools.print("Train: [{}] 1-{}/{}".format(epoch, self.produce_class11.count, self.produce_class11.count_2))
-            Tools.print("Train: [{}] 2-{}/{}".format(epoch, self.produce_class21.count, self.produce_class21.count_2))
-            Tools.print("Train: [{}] 3-{}/{}".format(epoch, self.produce_class31.count, self.produce_class31.count_2))
+            classes = self.produce_class2.classes
+            self.produce_class2.classes = self.produce_class1.classes
+            self.produce_class1.classes = classes
+            Tools.print("Train: [{}] {}/{}".format(epoch, self.produce_class1.count, self.produce_class1.count_2))
 
             ###########################################################################
-            # 2 测试模型
-            # if epoch % eval_epoch_freq == 0:
-            #     Tools.print()
-            #     self.eval(self.net, epoch=epoch, is_test=False)
-            #     Tools.print()
-            #     self.eval(self.net, epoch=epoch, is_test=True)
-            #     pass
-            ###########################################################################
-
-            ###########################################################################
-            # 3 保存模型
+            # 2 保存模型
             if epoch % save_epoch_freq == 0:
                 save_file_name = Tools.new_dir(os.path.join(
                     self.model_dir, "{}_train_{:.3f}.pth".format(epoch, all_loss / len(self.dataloader_usod))))
@@ -759,71 +639,6 @@ class BASRunner(object):
         Tools.print()
         pass
 
-    def eval(self, net, epoch=0, is_test=True, print_ite_num=100, th_num=100, beta_2=0.3):
-        which = "TE" if is_test else "TR"
-        data_dir = "{}/DUTS-{}".format(os.path.split(self.data_dir)[0], which)
-        image_dir, label_dir = 'DUTS-{}-Image'.format(which), 'DUTS-{}-Mask'.format(which)
-
-        # 数据
-        img_name_list = glob.glob(os.path.join(data_dir, image_dir, '*.jpg'))
-        lbl_name_list = [os.path.join(data_dir, label_dir, '{}.png'.format(
-            os.path.splitext(os.path.basename(img_path))[0])) for img_path in img_name_list]
-        dataset_eval_usod = DatasetEvalUSOD(img_name_list=img_name_list, lab_name_list=lbl_name_list)
-        dataloader_eval_usod = DataLoader(dataset_eval_usod, 1, shuffle=False, num_workers=8)
-
-        # 执行
-        d_m = [["output", "output_1"], ["output", "output_2"],
-               ["d1", "out_up_sigmoid"], ["d2", "out_up_sigmoid"], ["d3", "out_up_sigmoid"]]
-        avg_mae = [0.0] * len(d_m)
-        avg_prec = np.zeros(shape=(len(d_m), th_num)) + 1e-6
-        avg_recall = np.zeros(shape=(len(d_m), th_num)) + 1e-6
-        net.eval()
-        for i, (inputs, labels) in enumerate(dataloader_eval_usod):
-            inputs = inputs.type(torch.FloatTensor).cuda()
-            now_label = labels.squeeze().data.numpy() / 255
-
-            return_m, return_l, return_d = net(inputs)
-
-            mae_list = [0.0] * len(d_m)
-            for index, key in enumerate(d_m):
-                return_which = return_l if index < 2 else return_d
-                d_out = return_which[key[0]][key[1]].squeeze().cpu().data.numpy()
-                now_pred = np.asarray(Image.fromarray(d_out * 255).resize(
-                    (now_label.shape[1], now_label.shape[0]), resample=Image.BILINEAR)) / 255
-
-                mae = dataset_eval_usod.eval_mae(now_pred, now_label)
-                prec, recall = dataset_eval_usod.eval_pr(now_pred, now_label, th_num)
-
-                mae_list[index] = mae
-                avg_mae[index] += mae
-                avg_prec[index] += prec
-                avg_recall[index] += recall
-                pass
-
-            if i % print_ite_num == 0:
-                now = ""
-                for index, key in enumerate(d_m):
-                    now += "{}:{:.2f}/{:.2f} ".format(key[0], avg_mae[index] / (i + 1), mae_list[index])
-                    pass
-                Tools.print("{} [E:{:4d}, b:{:4d}/{:4d}] {}".format("Test" if is_test else "Train",
-                                                                    epoch, i, len(dataloader_eval_usod), now))
-                pass
-
-            pass
-
-        # 结果
-        score = np.zeros(shape=(len(d_m), th_num))
-        for index, key in enumerate(d_m):
-            avg_mae[index] = avg_mae[index] / len(dataloader_eval_usod)
-            avg_prec[index] = avg_prec[index] / len(dataloader_eval_usod)
-            avg_recall[index] = avg_recall[index] / len(dataloader_eval_usod)
-            score[index] = (1+beta_2)*avg_prec[index]*avg_recall[index]/(beta_2*avg_prec[index]+avg_recall[index])
-            Tools.print("{} {} {} {} {}".format("Test" if is_test else "Train", epoch,
-                                                key[0], avg_mae[index], score[index].max()))
-            pass
-
-        pass
-
     pass
 
 
@@ -835,10 +650,10 @@ if __name__ == '__main__':
     os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
     # os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
-    bas_runner = BASRunner(batch_size_train=16 * 5, data_dir="/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR",
-                           clustering_num_1=128 * 4, clustering_num_2=128 * 4, clustering_num_3=128 * 4,
-                           history_dir="../BASNetTemp/history/my_train_mic5_large_history9_1", has_history=True,
-                           model_dir="../BASNetTemp/saved_models/my_train_mic5_large_history9_1")
-    bas_runner.load_model('../BASNetTemp/saved_models/my_train_mic5_large/500_train_0.880.pth')
-    bas_runner.train(epoch_num=500, start_epoch=1)
+    bas_runner = BASRunner(batch_size_train=16 * 5, clustering_num=128 * 4, has_history=True,
+                           data_dir="/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR",
+                           history_dir="../BASNetTemp/history/my_train_mic5_large_history1_3",
+                           model_dir="../BASNetTemp/saved_models/my_train_mic5_large_history1_3")
+    # bas_runner.load_model('../BASNetTemp/saved_models/my_train_mic5_large/500_train_0.880.pth')
+    bas_runner.train(epoch_num=500, start_epoch=0)
     pass
