@@ -299,6 +299,7 @@ class BASNet(nn.Module):
 
         # -------------MIC-------------
         self.mic_l2norm = MICNormalize(2)
+        self.mic_pool = nn.MaxPool2d(2, 2, ceil_mode=True)
 
         # MIC 1
         self.mic_1_b1 = ResBlock(512, 512)  # 28
@@ -307,14 +308,12 @@ class BASNet(nn.Module):
         self.mic_1_c1 = ConvBlock(512, self.clustering_num_list[0], has_relu=True)
 
         # MIC 2
-        self.mic_3_pool = nn.MaxPool2d(2, 2, ceil_mode=True)
         self.mic_2_b1 = ResBlock(512, 512)  # 14
         self.mic_2_b2 = ResBlock(512, 512)
         self.mic_2_b3 = ResBlock(512, 512)
         self.mic_2_c1 = ConvBlock(512, self.clustering_num_list[1], has_relu=True)
 
         # MIC 3
-        self.mic_3_pool = nn.MaxPool2d(2, 2, ceil_mode=True)
         self.mic_3_b1 = ResBlock(512, 512)  # 7
         self.mic_3_b2 = ResBlock(512, 512)
         self.mic_3_b3 = ResBlock(512, 512)
@@ -352,13 +351,13 @@ class BASNet(nn.Module):
         return_m1 = {"smc_logits": smc_logits_1, "smc_l2norm": smc_l2norm_1}
 
         # 2
-        mic_2_feature = self.mic_2_b3(self.mic_2_b2(self.mic_2_b1(mic_1_feature)))  # 512 * 14 * 14
+        mic_2_feature = self.mic_pool(self.mic_2_b3(self.mic_2_b2(self.mic_2_b1(mic_1_feature))))  # 512 * 14 * 14
         mic_2 = self.mic_2_c1(mic_2_feature)  # 256 * 14 * 14
         smc_logits_2, smc_l2norm_2 = self.salient_map_clustering(mic_2)
         return_m2 = {"smc_logits": smc_logits_2, "smc_l2norm": smc_l2norm_2}
 
         # 3
-        mic_3_feature = self.mic_3_b3(self.mic_3_b2(self.mic_3_b1(mic_2_feature)))  # 512 * 7 * 7
+        mic_3_feature = self.mic_pool(self.mic_3_b3(self.mic_3_b2(self.mic_3_b1(mic_2_feature))))  # 512 * 7 * 7
         mic_3 = self.mic_3_c1(mic_3_feature)  # 512 * 7 * 7
         smc_logits_3, smc_l2norm_3 = self.salient_map_clustering(mic_3)
         return_m3 = {"smc_logits": smc_logits_3, "smc_l2norm": smc_l2norm_3}
@@ -376,9 +375,9 @@ class BASNet(nn.Module):
         cam_3_up = self._up_to_target(cam_3, cam_1_up)
         cam_3_up_norm = self._feature_norm(cam_3_up)
 
-        # cam_up_norm = (cam_1_up_norm + cam_2_up_norm + cam_3_up_norm) / 3
-        # cam_up_norm = (cam_1_up_norm + cam_2_up_norm) / 2
-        cam_up_norm = cam_1_up_norm
+        cam_up_norm = (cam_1_up_norm + cam_2_up_norm + cam_3_up_norm) / 3
+        # cam_up_norm = (cam_2_up_norm + cam_3_up_norm) / 2
+        # cam_up_norm = cam_3_up_norm
 
         # label = self.salient_map_divide(cam_up_norm, obj_th=0.8, bg_th=0.2, more_obj=False)  # 显著图划分
         label = cam_up_norm
@@ -672,8 +671,9 @@ class BASRunner(object):
                     # histories = (histories + sod_output) / 2
 
                     # 历史信息 = 历史信息 + CAM + SOD
-                    sod_label = self.sigmoid(sod_label * 20, a=12)
-                    sod_label = sod_label if histories.max() == 0 else (histories * 0.5 + sod_label * 0.5)
+                    # sod_label = self.sigmoid(sod_label * 20, a=12)
+                    # sod_label = sod_label if histories.max() == 0 else (histories * 0.5 + sod_label * 0.5)
+                    sod_label = sod_label if histories.max() == 0 else (histories * 0.8 + sod_label * 0.2)
                     # histories = sod_label * 2 / 3 + sod_output * 1 / 3
                     histories = sod_label
 
@@ -837,8 +837,8 @@ if __name__ == '__main__':
 
     bas_runner = BASRunner(batch_size_train=16 * 5, data_dir="/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR",
                            clustering_num_1=128 * 4, clustering_num_2=128 * 4, clustering_num_3=128 * 4,
-                           history_dir="../BASNetTemp/history/my_train_mic5_large_history9_1", has_history=True,
-                           model_dir="../BASNetTemp/saved_models/my_train_mic5_large_history9_1")
+                           history_dir="../BASNetTemp/history/my_train_mic5_large_history1_123", has_history=True,
+                           model_dir="../BASNetTemp/saved_models/my_train_mic5_large_history1_123")
     bas_runner.load_model('../BASNetTemp/saved_models/my_train_mic5_large/500_train_0.880.pth')
     bas_runner.train(epoch_num=500, start_epoch=1)
     pass
