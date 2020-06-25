@@ -344,8 +344,8 @@ class BASNet(nn.Module):
 
         # -------------Decoder-------------
         # decoder
-        d = self.decoder_1_b3(self.decoder_1_b2(self.decoder_1_b1(e4)))  # 512 * 28 * 28
-        d_out = self.decoder_1_out(d)  # 1 * 28 * 28
+        d = self.decoder_b3(self.decoder_b2(self.decoder_b1(e4)))  # 512 * 28 * 28
+        d_out = self.decoder_out(d)  # 1 * 28 * 28
         d_out_sigmoid = torch.sigmoid(d_out)  # 1 * 28 * 28 # 小输出
         d_out_up = self._up_to_target(d_out, x_for_up)  # 1 * 224 * 224
         d_out_up_sigmoid = torch.sigmoid(d_out_up)  # 1 * 224 * 224  # 大输出
@@ -438,7 +438,7 @@ class BASRunner(object):
         self.tra_his_name_list = self.tra_his_name_list if self.has_history else None
         self.dataset_usod = DatasetUSOD(img_name_list=self.tra_img_name_list,
                                         his_name_list=self.tra_his_name_list, is_train=True)
-        self.dataloader_usod = DataLoader(self.dataset_usod, self.batch_size_train, shuffle=True, num_workers=32)
+        self.dataloader_usod = DataLoader(self.dataset_usod, self.batch_size_train, shuffle=True, num_workers=16)
 
         # Model
         self.net = BASNet(3, clustering_num=clustering_num)
@@ -580,7 +580,8 @@ class BASRunner(object):
 
                     # 历史信息 = 历史信息 + CAM + SOD
                     # sod_label = self.sigmoid(sod_label * 20, a=12)
-                    sod_label = sod_label if histories.max() == 0 else (histories * 0.5 + sod_label * 0.5)
+                    # sod_label = sod_label if histories.max() == 0 else (histories * 0.5 + sod_label * 0.5)
+                    sod_label = sod_label if histories.max() == 0 else (histories * 0.8 + sod_label * 0.2)
                     # histories = sod_label * 2 / 3 + sod_output * 1 / 3
                     histories = sod_label
 
@@ -647,13 +648,13 @@ class BASRunner(object):
 
 
 if __name__ == '__main__':
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
-    # os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "2, 3"
 
-    bas_runner = BASRunner(batch_size_train=16 * 5, clustering_num=128 * 4, has_history=True,
+    bas_runner = BASRunner(batch_size_train=16 * 3, clustering_num=128 * 4, has_history=True,
                            data_dir="/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR",
-                           history_dir="../BASNetTemp/history/my_train_mic5_large_history1_3",
-                           model_dir="../BASNetTemp/saved_models/my_train_mic5_large_history1_3")
-    # bas_runner.load_model('../BASNetTemp/saved_models/my_train_mic5_large/500_train_0.880.pth')
-    bas_runner.train(epoch_num=500, start_epoch=0)
+                           history_dir="../BASNetTemp/history/my_train_mic5_large_history2_one",
+                           model_dir="../BASNetTemp/saved_models/my_train_mic5_large_history2_one")
+    bas_runner.load_model('../BASNetTemp/saved_models/my_train_mic5_large_history2_one/60_train_5.365.pth')
+    bas_runner.train(epoch_num=500, start_epoch=1)
     pass
