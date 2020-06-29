@@ -336,8 +336,9 @@ class BASNet(nn.Module):
             pass
 
         # -------------Encoder--------------
-        self.encoder0 = ConvBlock(3, 64, has_relu=True)  # 64 * 320 * 320
-        self.encoder0_max_pool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)  # 64 * 160 * 160
+        self.encoder0_1 = ConvBlock(3, 64, has_relu=True)  # 64 * 320 * 320
+        self.encoder0_2 = ConvBlock(64, 64, has_relu=True)  # 64 * 320 * 320
+        self.encoder0_max_pool = nn.MaxPool2d(2, 2)  # 64 * 160 * 160
         self.encoder1 = resnet.layer1  # 64 * 160 * 160
         self.encoder2 = resnet.layer2  # 128 * 80 * 80
         self.encoder3 = resnet.layer3  # 256 * 40 * 40
@@ -381,7 +382,7 @@ class BASNet(nn.Module):
         x_for_up = x
 
         # -------------Encoder-------------
-        e0 = self.encoder0_max_pool(self.encoder0(x))  # 64 * 160 * 160
+        e0 = self.encoder0_max_pool(self.encoder0_2(self.encoder0_1(x)))  # 64 * 160 * 160
         e1 = self.encoder1(e0)  # 64 * 160 * 160
         e2 = self.encoder2(e1)  # 128 * 80 * 80
         e3 = self.encoder3(e2)  # 256 * 40 * 40
@@ -774,37 +775,32 @@ class BASRunner(object):
 
 if __name__ == '__main__':
     """
-    100%|██████████| 220/220 [01:54<00:00,  1.92it/s]
-    2020-06-27 17:00:56 [E:198/500] loss:2.706 mic:2.706 sod:0.690
-    2020-06-27 17:00:56 Train: [198] 1-6920/1758
     
-    2020-06-28 02:33:10 Epoch:499, lr=0.00001
-    100%|██████████| 110/110 [01:02<00:00,  1.75it/s]
-    2020-06-28 02:34:16 [E:499/500] loss:2.102 mic:2.102 sod:0.687
-    2020-06-28 02:34:16 Train: [499] 1-5885/890
     """
 
     os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
     # os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
-    _pretrained_path = "./pre_model/resnet18_486_48.39.t7"
+    # _pretrained_path = "./pre_model/resnet18_486_48.39.t7"
+    _pretrained_path = None
+
     _lr = [[0, 0.001], [300, 0.0001], [400, 0.00001]]
     _epoch_num = 500
-    _num_workers = 40
+    _num_workers = 32
     _t = 5
     _sod_w = 2
     # _name = "my_train_mic5_large_history1_CRF_FULL_t{}_w{}_extend_only_decoder".format(_t, _sod_w)
-    _name = "my_train_mic5_large_history1_CRF_FULL_1MIC"
+    _name = "my_train_mic5_large_history1_CRF_FULL_2MIC"
     Tools.print(_name)
 
-    bas_runner = BASRunner(batch_size_train=16*5, clustering_num=128*2, clustering_num_2=128,
-                           clustering_ratio=2, clustering_ratio_2=1,
+    bas_runner = BASRunner(batch_size_train=16*5, clustering_num=128*2, clustering_num_2=128*2,
+                           clustering_ratio=2, clustering_ratio_2=2,
                            learning_rate=_lr, num_workers=_num_workers,
                            has_history=False, only_decoder=False, only_mic=True, has_crf=False,
                            pretrained_path=_pretrained_path,
                            data_dir="/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR",
                            history_dir="../BASNetTemp/history/{}".format(_name),
                            model_dir="../BASNetTemp/saved_models/{}".format(_name))
-    bas_runner.load_model('../BASNetTemp/saved_models/my_train_mic5_large_history1_CRF_FULL_1MIC/420_train_1.461.pth')
+    # bas_runner.load_model('../BASNetTemp/saved_models/my_train_mic5_large_history1_CRF_FULL_1MIC/300_train_3.593.pth')
     bas_runner.train(epoch_num=_epoch_num, start_epoch=0, t=_t, sod_w=_sod_w, print_ite_num=0)
     pass
