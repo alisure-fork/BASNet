@@ -762,6 +762,51 @@ class BASRunner(object):
         Tools.print()
         pass
 
+    def vis(self, t=5):
+        self.net.eval()
+        with torch.no_grad():
+            for _idx, (inputs, histories, image_for_crf, params, indexes) in tqdm(
+                    enumerate(self.dataloader_usod), total=len(self.dataloader_usod)):
+                inputs = inputs.type(torch.FloatTensor).cuda()
+                indexes = indexes.cuda()
+
+                return_result = self.net(inputs)
+
+                ######################################################################################################
+                # 历史信息 = 历史信息 + CAM + SOD
+                histories = histories
+                sod_label_ori = return_result["cam_up_norm"].detach()  # CAM
+                sod_output = return_result["output_up"]  # Predict
+
+                sod_label = sod_label_ori
+                if self.has_history:
+                    self.save_history_info(sod_output, params=params, indexes=indexes, name="output")
+                    self.save_history_info(sod_label_ori, params=params, indexes=indexes, name="label_before_crf")
+
+                    # 1
+                    # sod_label = sod_label_crf
+
+                    if self.has_crf:
+                        sod_label_crf = CRFTool.crf_torch(image_for_crf, sod_label_ori, t=t)
+
+                        # 2
+                        ignore_label = 0.5
+                        sod_label = torch.ones_like(sod_label_ori) * ignore_label
+                        sod_label[(sod_label_ori > 0.5) & (sod_label_crf > 0.5)] = 1.0
+                        sod_label[(sod_label_ori < 0.3) & (sod_label_crf < 0.5)] = 0.0
+
+                        self.save_history_info(sod_label_crf, params=params, indexes=indexes, name="label_after_crf")
+                        pass
+
+                    self.save_history_info(histories=histories, params=params, indexes=indexes)
+                    self.save_history_info(sod_label, params=params, indexes=indexes, name="label")
+                    pass
+                ######################################################################################################
+
+                pass
+            pass
+        pass
+
     @staticmethod
     def sigmoid(x, a=10):
         return 1 / (1 + torch.exp(-(x - a)))
@@ -788,23 +833,24 @@ if __name__ == '__main__':
     # _pretrained_path = "./pre_model/resnet18_486_48.39.t7"
     _pretrained_path = None
 
-    _lr = [[0, 0.001], [300, 0.0001], [400, 0.00001]]
+    _lr = [[0, 0.01], [400, 0.001]]
     _epoch_num = 500
     _num_workers = 32
     _t = 5
     _sod_w = 2
-    # _name = "my_train_mic5_large_history1_CRF_FULL_t{}_w{}_extend_only_decoder".format(_t, _sod_w)
-    _name = "my_train_mic5_large_history1_CRF_FULL_2MIC"
+    # _name = "my_train_mic5_large_history1_CRF_FULL_2MIC"
+    _name = "my_train_mic5_large_history1_CRF_FULL_2MIC_t{}_w{}".format(_t, _sod_w)
     Tools.print(_name)
 
     bas_runner = BASRunner(batch_size_train=16 * 5, clustering_num=128 * 2, clustering_num_2=128 * 2,
                            clustering_ratio=2, clustering_ratio_2=2,
                            learning_rate=_lr, num_workers=_num_workers,
-                           has_history=False, only_decoder=False, only_mic=True, has_crf=False,
+                           has_history=True, only_decoder=False, only_mic=False, has_crf=True,
                            pretrained_path=_pretrained_path,
                            data_dir="/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR",
                            history_dir="../BASNetTemp/history/{}".format(_name),
                            model_dir="../BASNetTemp/saved_models/{}".format(_name))
-    # bas_runner.load_model('../BASNetTemp/saved_models/my_train_mic5_large_history1_CRF_FULL_1MIC/300_train_3.593.pth')
-    bas_runner.train(epoch_num=_epoch_num, start_epoch=0, t=_t, sod_w=_sod_w, print_ite_num=0)
+    # bas_runner.load_model('../BASNetTemp/saved_models/my_train_mic5_large_history1_CRF_FULL_2MIC/500_train_3.320.pth')
+    # bas_runner.train(epoch_num=_epoch_num, start_epoch=0, t=_t, sod_w=_sod_w, print_ite_num=0)
+    bas_runner.vis(t=2)
     pass

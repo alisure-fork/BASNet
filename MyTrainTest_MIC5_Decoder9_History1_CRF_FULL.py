@@ -182,6 +182,7 @@ class DatasetUSOD(Dataset):
                 h_path = "{}_{}.{}".format(os.path.splitext(h_path)[0], name, os.path.splitext(h_path)[1])
             h_path = Tools.new_dir(h_path)
 
+            his = np.transpose(his, (1, 2, 0)) if his.shape[0] == 1 or his.shape[0] == 3 else his
             im = Image.fromarray(np.asarray(his * 255, dtype=np.uint8)).resize((param[0], param[1]))
             im = im.transpose(Image.FLIP_LEFT_RIGHT) if param[2] == 1 else im
             im.save(h_path)
@@ -383,9 +384,9 @@ class BASNet(nn.Module):
         cam_3_up = self._up_to_target(cam_3, cam_1_up)
         cam_3_up_norm = self._feature_norm(cam_3_up)
 
-        cam_up_norm = (cam_1_up_norm + cam_2_up_norm + cam_3_up_norm) / 3
+        # cam_up_norm = (cam_1_up_norm + cam_2_up_norm + cam_3_up_norm) / 3
         # cam_up_norm = (cam_2_up_norm + cam_3_up_norm) / 2
-        # cam_up_norm = cam_3_up_norm
+        cam_up_norm = cam_3_up_norm
 
         # label = self.salient_map_divide(cam_up_norm, obj_th=0.8, bg_th=0.2, more_obj=False)  # 显著图划分
         label = cam_up_norm
@@ -769,6 +770,47 @@ class BASRunner(object):
         Tools.print()
         pass
 
+    def vis(self, t=5):
+        self.net.eval()
+        with torch.no_grad():
+            for _idx, (inputs, histories, image_for_crf, params, indexes) in tqdm(
+                    enumerate(self.dataloader_usod), total=len(self.dataloader_usod)):
+                inputs = inputs.type(torch.FloatTensor).cuda()
+                indexes = indexes.cuda()
+
+                return_m, return_l, _ = self.net(inputs)
+
+                ######################################################################################################
+                # 历史信息 = 历史信息 + CAM + SOD
+                histories = histories
+                sod_label_ori = return_l["label"]["label"].detach()  # CAM
+                sod_output = return_l["output"]["output"]  # Predict
+
+                if self.has_history:
+                    self.save_history_info(image_for_crf, params=params, indexes=indexes, name="image")
+                    self.save_history_info(sod_label_ori, params=params, indexes=indexes, name="label_before_crf")
+
+                    # 1
+                    # sod_label = sod_label_crf
+
+                    sod_label_crf = CRFTool.crf_torch(image_for_crf, sod_label_ori, t=t)
+
+                    # 2
+                    ignore_label = 0.5
+                    sod_label = torch.ones_like(sod_label_ori) * ignore_label
+                    sod_label[(sod_label_ori > 0.5) & (sod_label_crf > 0.5)] = 1.0
+                    sod_label[(sod_label_ori < 0.3) & (sod_label_crf < 0.5)] = 0.0
+
+                    self.save_history_info(sod_label_crf, params=params, indexes=indexes, name="label_after_crf")
+                    self.save_history_info(histories=histories, params=params, indexes=indexes)
+                    self.save_history_info(sod_label, params=params, indexes=indexes, name="label")
+                    pass
+                ######################################################################################################
+
+                pass
+            pass
+        pass
+
     pass
 
 
@@ -778,11 +820,11 @@ class BASRunner(object):
 
 if __name__ == '__main__':
     # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
     _t = 5
     _sod_w = 2
-    _name = "my_train_mic5_large_history1_CRF_FULL_t{}_w{}_extend_only_decoder".format(_t, _sod_w)
+    _name = "CRF_FULL_t{}_w{}_3".format(_t, _sod_w)
     Tools.print(_name)
 
     bas_runner = BASRunner(batch_size_train=12, has_history=True, only_decoder=True, clustering_num_1=128 * 4,
@@ -792,5 +834,6 @@ if __name__ == '__main__':
                            model_dir="../BASNetTemp/saved_models/{}".format(_name))
     # bas_runner.load_model('../BASNetTemp/saved_models/my_train_mic5_large/500_train_0.880.pth')
     bas_runner.load_model("../BASNetTemp/saved_models/my_train_mic5_large_history1_123/460_train_9.385.pth")
-    bas_runner.train(epoch_num=200, start_epoch=1, t=_t, sod_w=_sod_w)
+    # bas_runner.train(epoch_num=200, start_epoch=1, t=_t, sod_w=_sod_w)
+    bas_runner.vis(t=5)
     pass

@@ -152,17 +152,17 @@ class BASNet(nn.Module):
         resnet = models.resnet18(pretrained=False)
 
         # -------------Encoder--------------
-        self.encoder0 = ConvBlock(n_channels, 64, has_relu=True)
-        self.encoder1 = resnet.layer1  # 224
-        self.encoder2 = resnet.layer2  # 112
-        self.encoder3 = resnet.layer3  # 56
-        self.encoder4 = resnet.layer4  # 28
+        self.encoder0 = ConvBlock(n_channels, 64, has_relu=True)  # 224 256 320
+        self.encoder1 = resnet.layer1  # 224 256 320
+        self.encoder2 = resnet.layer2  # 112 128 160
+        self.encoder3 = resnet.layer3  # 56 64 80
+        self.encoder4 = resnet.layer4  # 28 32 40
 
         # -------------MIC-------------
         self.clustering_num_list = list([128, 256, 512]) if clustering_num_list is None else clustering_num_list
 
         # MIC 1
-        self.mic_1_b1 = ResBlock(512, 512)  # 28
+        self.mic_1_b1 = ResBlock(512, 512)  # 28 32 40
         self.mic_1_b2 = ResBlock(512, 512)
         self.mic_1_b3 = ResBlock(512, 512)
         self.mic_1_c1 = ConvBlock(512, self.clustering_num_list[0], has_relu=True)
@@ -170,7 +170,7 @@ class BASNet(nn.Module):
 
         # MIC 2
         self.mic_2_pool = nn.MaxPool2d(2, 2, ceil_mode=True)
-        self.mic_2_b1 = ResBlock(512, 512)  # 14
+        self.mic_2_b1 = ResBlock(512, 512)  # 14 16 20
         self.mic_2_b2 = ResBlock(512, 512)
         self.mic_2_b3 = ResBlock(512, 512)
         self.mic_2_c1 = ConvBlock(512, self.clustering_num_list[1], has_relu=True)
@@ -178,7 +178,7 @@ class BASNet(nn.Module):
 
         # MIC 3
         self.mic_3_pool = nn.MaxPool2d(2, 2, ceil_mode=True)
-        self.mic_3_b1 = ResBlock(512, 512)  # 7
+        self.mic_3_b1 = ResBlock(512, 512)  # 7 8 10
         self.mic_3_b2 = ResBlock(512, 512)
         self.mic_3_b3 = ResBlock(512, 512)
         self.mic_3_c1 = ConvBlock(512, self.clustering_num_list[2], has_relu=True)
@@ -500,7 +500,7 @@ if __name__ == '__main__':
 
     bas_runner = BASRunner(batch_size_train=16 * 4, data_dir="/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR",
                            clustering_num_1=128 * 4, clustering_num_2=128 * 4, clustering_num_3=128 * 4,
-                           model_dir="../BASNetTemp/saved_models/my_train_mic5_large_demo")
+                           model_dir="../BASNetTemp/saved_models/my_train_mic5_large_256")
     bas_runner.load_model('../BASNetTemp/saved_models/my_train_mic5_large/500_train_0.880.pth')
     bas_runner.train(epoch_num=500, start_epoch=0)
     pass
