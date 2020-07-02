@@ -6,7 +6,7 @@ from PIL import Image
 from skimage import io
 from alisuretool.Tools import Tools
 from torch.utils.data import DataLoader
-from MyTrainTest_MIC5_Decoder9_M0 import BASNet, DatasetUSOD
+from src.MyTrainTest_MIC5_Decoder9_M0 import BASNet, DatasetUSOD
 
 
 def visualization():

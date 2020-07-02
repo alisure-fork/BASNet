@@ -20,7 +20,7 @@ from torchvision.models.resnet import BasicBlock as ResBlock
 
 class DatasetUSOD(Dataset):
 
-    def __init__(self, img_name_list, is_train=True):
+    def __init__(self, img_name_list, is_train=True, size=224):
         # self.image_name_list = img_name_list[:20]
         # self.label_name_list = lbl_name_list[:20]
         self.image_name_list = img_name_list
@@ -260,7 +260,7 @@ class BASNet(nn.Module):
 class BASRunner(object):
 
     def __init__(self, batch_size_train=8, clustering_num_1=128, clustering_num_2=256, clustering_num_3=512,
-                 clustering_ratio_1=1, clustering_ratio_2=1.5, clustering_ratio_3=2,
+                 clustering_ratio_1=1, clustering_ratio_2=1.5, clustering_ratio_3=2, size=224,
                  data_dir='/mnt/4T/Data/SOD/DUTS/DUTS-TR', tra_image_dir='DUTS-TR-Image',
                  tra_label_dir='DUTS-TR-Mask', model_dir="./saved_models/my_train_mic5"):
         self.batch_size_train = batch_size_train
@@ -271,7 +271,7 @@ class BASRunner(object):
         self.tra_image_dir = tra_image_dir
         self.tra_label_dir = tra_label_dir
         self.tra_img_name_list, tra_lbl_name_list = self.get_tra_img_label_name()
-        self.dataset_usod = DatasetUSOD(img_name_list=self.tra_img_name_list, is_train=True)
+        self.dataset_usod = DatasetUSOD(img_name_list=self.tra_img_name_list, is_train=True, size=size)
         self.dataloader_usod = DataLoader(self.dataset_usod, self.batch_size_train, shuffle=True, num_workers=8)
 
         # Model
@@ -492,15 +492,18 @@ class BASRunner(object):
 
 
 if __name__ == '__main__':
-    os.environ["CUDA_VISIBLE_DEVICES"] = "1, 2, 3"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
     """
     2020-06-15 06:11:23 [E:299/300] loss:3.849 mic 1:1.476 mic2:1.213 mic3:1.159
     """
 
-    bas_runner = BASRunner(batch_size_train=16 * 4, data_dir="/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR",
+    _size = 224
+    _name = "MyTrain_MIC5_{}".format(_size)
+    bas_runner = BASRunner(batch_size_train=16 * 1, data_dir="/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR",
                            clustering_num_1=128 * 4, clustering_num_2=128 * 4, clustering_num_3=128 * 4,
-                           model_dir="../BASNetTemp/saved_models/my_train_mic5_large_256")
-    bas_runner.load_model('../BASNetTemp/saved_models/my_train_mic5_large/500_train_0.880.pth')
-    bas_runner.train(epoch_num=500, start_epoch=0)
+                           size=_size,
+                           model_dir="../BASNetTemp/saved_models/{}".format(_name))
+    # bas_runner.load_model('../BASNetTemp/saved_models/{}/500_train_0.880.pth'.format(_name))
+    bas_runner.train(epoch_num=500, start_epoch=1)
     pass

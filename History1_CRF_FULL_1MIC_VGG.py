@@ -1,4 +1,5 @@
 import os
+import math
 import glob
 import torch
 import random
@@ -6,18 +7,14 @@ import numpy as np
 from tqdm import tqdm
 import torch.nn as nn
 from PIL import Image
-from skimage import io
 import torch.optim as optim
-from torchvision import models
 import torch.nn.functional as F
 import pydensecrf.densecrf as dcrf
 from torchvision import transforms
 from alisuretool.Tools import Tools
 import torch.backends.cudnn as cudnn
-from multiprocessing.pool import Pool
 from pydensecrf.utils import unary_from_softmax
 from torch.utils.data import DataLoader, Dataset
-from torchvision.models.resnet import BasicBlock as ResBlock
 
 
 #######################################################################################################################
@@ -159,17 +156,17 @@ class Compose(transforms.Compose):
 
 class DatasetUSOD(Dataset):
 
-    def __init__(self, img_name_list, his_name_list=None, is_train=True, only_mic=False):
+    def __init__(self, img_name_list, his_name_list=None, is_train=True, only_mic=False, size=256):
         self.image_name_list = img_name_list
         self.history_name_list = his_name_list
         self.has_history = self.history_name_list is not None
 
         self.is_train = is_train
 
-        transform_train = Compose([RandomResizedCrop(size=320, scale=(0.3, 1.)), ColorJitter(0.4, 0.4, 0.4, 0.4),
+        transform_train = Compose([RandomResizedCrop(size=size, scale=(0.3, 1.)), ColorJitter(0.4, 0.4, 0.4, 0.4),
                                    RandomGrayscale(p=0.2), RandomHorizontalFlip(),
                                    ToTensor(), Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))])
-        transform_train_sod = Compose([RandomResized(img_w=320, img_h=320), RandomHorizontalFlip(),
+        transform_train_sod = Compose([RandomResized(img_w=size, img_h=size), RandomHorizontalFlip(),
                                        ToTensor(), Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))])
 
         self.transform_train = transform_train if only_mic else transform_train_sod
@@ -237,6 +234,10 @@ class ConvBlock(nn.Module):
         self.conv = nn.Conv2d(cin, cout, kernel_size=3, stride=stride, padding=1, bias=False)
         self.bn = nn.BatchNorm2d(cout)
         self.relu = nn.ReLU(inplace=True)
+
+        self.conv.weight.data.normal_(0, math.sqrt(2. / 9 * cout))
+        self.bn.weight.data.fill_(1)
+        self.bn.bias.data.zero_()
         pass
 
     def forward(self, x):
@@ -318,38 +319,56 @@ class MICProduceClass(object):
     pass
 
 
+class VGG16BN(nn.Module):
+
+    def __init__(self):
+        super(VGG16BN, self).__init__()
+        #  [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512, 'M']
+        self.layer1 = nn.Sequential(*[ConvBlock(3, 64, 1, has_relu=True),
+                                      ConvBlock(64, 64, 1, has_relu=True),
+                                      nn.MaxPool2d(kernel_size=2, stride=2)])  # 112
+        self.layer2 = nn.Sequential(*[ConvBlock(64, 128, 1, has_relu=True),
+                                      ConvBlock(128, 128, 1, has_relu=True),
+                                      nn.MaxPool2d(kernel_size=2, stride=2)])  # 56
+        self.layer3 = nn.Sequential(*[ConvBlock(128, 256, 1, has_relu=True),
+                                      ConvBlock(256, 256, 1, has_relu=True),
+                                      ConvBlock(256, 256, 1, has_relu=True),
+                                      nn.MaxPool2d(kernel_size=2, stride=2)])  # 28
+        self.layer4 = nn.Sequential(*[ConvBlock(256, 512, 1, has_relu=True),
+                                      ConvBlock(512, 512, 1, has_relu=True),
+                                      ConvBlock(512, 512, 1, has_relu=True),
+                                      nn.MaxPool2d(kernel_size=2, stride=2)])  # 14
+        self.layer5 = nn.Sequential(*[ConvBlock(512, 512, 1, has_relu=True),
+                                      ConvBlock(512, 512, 1, has_relu=True),
+                                      ConvBlock(512, 512, 1, has_relu=True)])  # 14
+        pass
+
+    def forward(self, x):
+        out = self.layer1(x)
+        out = self.layer2(out)
+        out = self.layer3(out)
+        out = self.layer4(out)
+        out = self.layer5(out)
+        return out
+
+    pass
+
+
 class BASNet(nn.Module):
 
-    def __init__(self, clustering_num, pretrained_path=None):
+    def __init__(self, clustering_num):
         super(BASNet, self).__init__()
         self.clustering_num = clustering_num
 
-        resnet = models.resnet18(pretrained=False)
-
-        if pretrained_path is not None:
-            state_dict = torch.load(pretrained_path)
-            c_value = {key.replace("module.backbone.", ""): state_dict["net"][key] for key in state_dict["net"].keys()}
-            result = resnet.load_state_dict(c_value, strict=False)
-            Tools.print("load pretrained from {}".format(pretrained_path))
-            Tools.print("missing_keys: {} unexpected_keys: {}".format(result.missing_keys, result.unexpected_keys))
-            pass
-
         # -------------Encoder--------------
-        self.encoder0_1 = ConvBlock(3, 64, has_relu=True)  # 320 256 288
-        self.encoder0_2 = ConvBlock(64, 64, has_relu=True)  # 320 256 288
-        self.encoder0_max_pool = nn.MaxPool2d(2, 2)  # 160 128 144
-        self.encoder1 = resnet.layer1  # 160 128 144
-        self.encoder2 = resnet.layer2  # 80 64 72
-        self.encoder3 = resnet.layer3  # 40 32 36
-        self.encoder4 = resnet.layer4  # 20 16 18
+        self.vgg16 = VGG16BN()
 
         # -------------MIC-------------
         self.mic_l2norm = MICNormalize(2)
         self.mic_max_pool = nn.MaxPool2d(2, 2)
-
-        self.mic_b1 = ResBlock(512, 512)  # 10 8 9
-        self.mic_b2 = ResBlock(512, 512)
-        self.mic_c1 = ConvBlock(512, self.clustering_num, has_relu=True)
+        self.mic_b1 = ConvBlock(512, 512, 1, has_relu=True)  # 10 8 9
+        self.mic_b2 = ConvBlock(512, 512, 1, has_relu=True)
+        self.mic_c1 = ConvBlock(512, self.clustering_num)
 
         # -------------Decoder-------------
         # self.decoder_0_b1 = ResBlock(512, 512)  # 10
@@ -370,17 +389,15 @@ class BASNet(nn.Module):
         pass
 
     def forward(self, x):
-        x_for_up = x
-
         # -------------Encoder-------------
-        e0 = self.encoder0_max_pool(self.encoder0_2(self.encoder0_1(x)))  # 64 * 160 * 160
-        e1 = self.encoder1(e0)  # 64 * 160 * 160
-        e2 = self.encoder2(e1)  # 128 * 80 * 80
-        e3 = self.encoder3(e2)  # 256 * 40 * 40
-        e4 = self.encoder4(e3)  # 512 * 20 * 20
+        e1 = self.vgg16.layer1(x)  # 64 * 160 * 160
+        e2 = self.vgg16.layer2(e1)  # 128 * 80 * 80
+        e3 = self.vgg16.layer3(e2)  # 256 * 40 * 40
+        e4 = self.vgg16.layer4(e3)  # 512 * 20 * 20
+        e5 = self.vgg16.layer5(e4)  # 512 * 20 * 20
 
         # -------------MIC-------------
-        mic_feature = self.mic_b2(self.mic_b1(self.mic_max_pool(e4)))  # 512 * 10 * 10
+        mic_feature = self.mic_b2(self.mic_b1(self.mic_max_pool(e5)))  # 512 * 10 * 10
         mic = self.mic_c1(mic_feature)  # 128 * 10 * 10
         smc_logits, smc_l2norm = self.salient_map_clustering(mic)
         return_result = {"smc_logits": smc_logits, "smc_l2norm": smc_l2norm}
@@ -388,7 +405,7 @@ class BASNet(nn.Module):
         # -------------Label-------------
         # cam = self.cluster_activation_map(smc_logits, mic)  # 簇激活图：Cluster Activation Map
         # cam_norm = self._feature_norm(cam)
-        # cam_up_norm = self._up_to_target(cam_norm, x_for_up)
+        # cam_up_norm = self._up_to_target(cam_norm, x)
         # return_result["cam_norm"] = cam_norm
         # return_result["cam_up_norm"] = cam_up_norm
 
@@ -403,7 +420,7 @@ class BASNet(nn.Module):
 
         # d3_out = self.decoder_3_out(d3)  # 1 * 80 * 80
         # d3_out_sigmoid = torch.sigmoid(d3_out)  # 1 * 80 * 80  # 小输出
-        # d3_out_up = self._up_to_target(d3_out, x_for_up)  # 1 * 320 * 320
+        # d3_out_up = self._up_to_target(d3_out, x)  # 1 * 320 * 320
         # d3_out_up_sigmoid = torch.sigmoid(d3_out_up)  # 1 * 320 * 320  # 大输出
 
         # return_result["output"] = d3_out_sigmoid
@@ -422,31 +439,6 @@ class BASNet(nn.Module):
         top_k_value, top_k_index = torch.topk(smc_logits, 1, 1)
         cam = torch.cat([mic_feature[i:i+1, top_k_index[i], :, :] for i in range(mic_feature.size()[0])])
         return cam
-
-    def salient_map_divide(self, cam_up_sigmoid, obj_th=0.7, bg_th=0.2, more_obj=False):
-        cam_up_sigmoid = self._feature_norm(cam_up_sigmoid)
-
-        input_size = tuple(cam_up_sigmoid.size())
-        label = torch.zeros(input_size).fill_(255).cuda()
-
-        # bg
-        label[cam_up_sigmoid < bg_th] = 0.0
-
-        # obj
-        if more_obj:
-            for i in range(input_size[0]):
-                mask_pos_i = cam_up_sigmoid[i] > obj_th
-                if torch.sum(mask_pos_i) < input_size[-1] * input_size[-2] / 22:
-                    mask_pos_i = cam_up_sigmoid[i] > (obj_th * 0.9)
-                    pass
-                label[i][mask_pos_i] = 1.0
-                pass
-            pass
-        else:
-            label[cam_up_sigmoid > obj_th] = 1.0
-            pass
-
-        return label
 
     @staticmethod
     def _up_to_target(source, target):
@@ -473,9 +465,9 @@ class BASNet(nn.Module):
 
 class BASRunner(object):
 
-    def __init__(self, batch_size_train=8, clustering_num=128, clustering_ratio=2, has_crf=False,
+    def __init__(self, batch_size_train=8, clustering_num=128, clustering_ratio=2, has_crf=False, size=256,
                  only_mic=False, only_decoder=False, has_history=False, learning_rate=None, num_workers=32,
-                 data_dir='/mnt/4T/Data/SOD/DUTS/DUTS-TR', tra_image_dir='DUTS-TR-Image', pretrained_path=None,
+                 data_dir='/mnt/4T/Data/SOD/DUTS/DUTS-TR', tra_image_dir='DUTS-TR-Image',
                  tra_label_dir='DUTS-TR-Mask', model_dir="./saved_models/my_train_mic_only",
                  history_dir="./history/my_train_mic5_large_history1"):
         self.batch_size_train = batch_size_train
@@ -495,12 +487,12 @@ class BASRunner(object):
         self.tra_img_name_list, tra_lbl_name_list, self.tra_his_name_list = self.get_tra_img_label_name()
         self.tra_his_name_list = self.tra_his_name_list if self.has_history else None
         self.dataset_usod = DatasetUSOD(img_name_list=self.tra_img_name_list, only_mic=self.only_mic,
-                                        his_name_list=self.tra_his_name_list, is_train=True)
+                                        his_name_list=self.tra_his_name_list, is_train=True, size=size)
         self.dataloader_usod = DataLoader(self.dataset_usod, self.batch_size_train,
                                           shuffle=True, num_workers=num_workers)
 
         # Model
-        self.net = BASNet(clustering_num=clustering_num, pretrained_path=pretrained_path)
+        self.net = BASNet(clustering_num=clustering_num)
 
         ###########################################################################
         if torch.cuda.is_available():
@@ -732,34 +724,30 @@ class BASRunner(object):
 
 if __name__ == '__main__':
     """
-    2020-07-02 09:26:05 Epoch:260, lr=0.00100
-    2020-07-02 09:28:29 [E:260/500] loss:1.789 mic:1.789 sod:1.789
-    2020-07-02 09:28:29 Train: [260] 1-6143/899
-    2020-07-02 09:28:29 Save Model to ../BASNetTemp/saved_models/History1_CRF_FULL_1MIC_320/260_train_1.793.pth
+    2020-07-02 05:37:41 Epoch:499, lr=0.00010
+    2020-07-02 05:38:32 [E:499/500] loss:1.558 mic:1.558 sod:1.558
+    2020-07-02 05:38:32 Train: [499] 1-5601/936
+    2020-07-02 05:38:33 Save Model to ../BASNetTemp/saved_models/History1_CRF_FULL_1MIC_VGG_224/500_train_1.570.pth
     """
 
-    # os.environ["CUDA_VISIBLE_DEVICES"] = "2, 3"
-    os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "2, 3"
 
-    # _pretrained_path = "./pre_model/resnet18_486_48.39.t7"
-    _pretrained_path = None
-
-    # _lr = [[0, 0.01], [400, 0.001]]
-    _lr = [[0, 0.001], [400, 0.0001]]
+    # _lr = [[0, 0.01], [300, 0.001], [400, 0.0001]]
+    _lr = [[0, 0.0001], [10, 0.001], [20, 0.01], [100, 0.001], [400, 0.0001]]
     _epoch_num = 500
     _num_workers = 32
     _t = 5
     _sod_w = 2
-    _name = "History1_CRF_FULL_1MIC_320"
+    _size = 256
+    _name = "History1_CRF_FULL_1MIC_VGG_{}".format(_size)
     Tools.print(_name)
 
-    bas_runner = BASRunner(batch_size_train=12 * 2, clustering_num=128, clustering_ratio=5,
-                           learning_rate=_lr, num_workers=_num_workers,
+    bas_runner = BASRunner(batch_size_train=16 * 6, clustering_num=128, clustering_ratio=2,
+                           learning_rate=_lr, num_workers=_num_workers, size=_size,
                            has_history=False, only_decoder=False, only_mic=True, has_crf=False,
-                           pretrained_path=_pretrained_path,
                            data_dir="/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR",
                            history_dir="../BASNetTemp/history/{}".format(_name),
                            model_dir="../BASNetTemp/saved_models/{}".format(_name))
-    bas_runner.load_model('../BASNetTemp/saved_models/History1_CRF_FULL_1MIC_320/160_train_2.032.pth')
+    # bas_runner.load_model('../BASNetTemp/saved_models/my_train_mic5_large_history1_CRF_FULL_1MIC/500_train_1.461.pth')
     bas_runner.train(epoch_num=_epoch_num, start_epoch=0, t=_t, sod_w=_sod_w, print_ite_num=0)
     pass
