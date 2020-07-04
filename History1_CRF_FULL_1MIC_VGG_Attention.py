@@ -170,7 +170,8 @@ class DatasetUSOD(Dataset):
                                        ToTensor(), Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))])
 
         self.transform_train = transform_train if only_mic else transform_train_sod
-        self.transform_test = Compose([ToTensor(), Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))])
+        self.transform_test = Compose([RandomResized(img_w=size, img_h=size),
+                                       ToTensor(), Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))])
 
         # self.image_list = self._pre_load_data()
         self.image_list = None
@@ -213,6 +214,7 @@ class DatasetUSOD(Dataset):
                 h_path = "{}_{}.{}".format(os.path.splitext(h_path)[0], name, os.path.splitext(h_path)[1])
             h_path = Tools.new_dir(h_path)
 
+            his = np.transpose(his, (1, 2, 0)) if his.shape[0] == 1 or his.shape[0] == 3 else his
             im = Image.fromarray(np.asarray(his * 255, dtype=np.uint8)).resize((param[0], param[1]))
             im = im.transpose(Image.FLIP_LEFT_RIGHT) if param[2] == 1 else im
             im.save(h_path)
@@ -227,25 +229,30 @@ class DatasetUSOD(Dataset):
 
 class ConvBlock(nn.Module):
 
-    def __init__(self, cin, cout, stride=1, ks=3, padding=1, has_relu=True):
+    def __init__(self, cin, cout, stride=1, ks=3, padding=1, has_relu=True, has_bn=True, has_bias=True):
         super(ConvBlock, self).__init__()
         self.has_relu = has_relu
+        self.has_bn = has_bn
 
-        self.conv = nn.Conv2d(cin, cout, kernel_size=ks, stride=stride, padding=padding, bias=False)
+        self.conv = nn.Conv2d(cin, cout, kernel_size=ks, stride=stride, padding=padding, bias=has_bias)
         self.bn = nn.BatchNorm2d(cout)
         self.relu = nn.ReLU(inplace=True)
 
-        self.conv.weight.data.normal_(0, math.sqrt(2. / 9 * cout))
+        torch.nn.init.xavier_uniform_(self.conv.weight)
         self.bn.weight.data.fill_(1)
         self.bn.bias.data.zero_()
         pass
 
     def forward(self, x):
         out = self.conv(x)
-        out = self.bn(out)
+        if self.has_bn:
+            out = self.bn(out)
         if self.has_relu:
             out = self.relu(out)
         return out
+
+    def __call__(self, *args, **kwargs):
+        return super().__call__(*args, **kwargs)
 
     pass
 
@@ -261,6 +268,9 @@ class MICNormalize(nn.Module):
         norm = x.pow(self.power).sum(dim, keepdim=True).pow(1. / self.power)
         out = x.div(norm)
         return out
+
+    def __call__(self, *args, **kwargs):
+        return super().__call__(*args, **kwargs)
 
     pass
 
@@ -356,9 +366,12 @@ class VGG16BN(nn.Module):
 
 class BASNet(nn.Module):
 
-    def __init__(self, clustering_num):
+    def __init__(self, clustering_num, has_attention=True, sigmoid_attention=True, softmax_attention=False):
         super(BASNet, self).__init__()
         self.clustering_num = clustering_num
+        self.has_attention = has_attention
+        self.sigmoid_attention = sigmoid_attention
+        self.softmax_attention = softmax_attention
 
         # -------------Encoder--------------
         self.vgg16 = VGG16BN()
@@ -368,9 +381,10 @@ class BASNet(nn.Module):
         self.mic_max_pool = nn.MaxPool2d(2, 2)
         self.mic_b1 = ConvBlock(512, 512, 1, has_relu=True)  # 10 8 9
         self.mic_b2 = ConvBlock(512, 512, 1, has_relu=True)
-        self.mic_c1 = ConvBlock(512, self.clustering_num)
+        self.mic_c1 = ConvBlock(512, self.clustering_num, has_relu=False)
 
-        self.mic_a1 = ConvBlock(self.clustering_num, 1, 1, ks=1, padding=0, has_relu=True)
+        self.mic_for_sigmoid_attention = ConvBlock(self.clustering_num, 1, 1, ks=1, padding=0, has_relu=False)
+        self.mic_for_softmax_attention = ConvBlock(self.clustering_num, 1, 1, ks=1, padding=0, has_relu=False)
 
         # -------------Decoder-------------
         # self.decoder_0_b1 = ResBlock(512, 512)  # 10
@@ -391,6 +405,8 @@ class BASNet(nn.Module):
         pass
 
     def forward(self, x):
+        return_result = {}
+
         # -------------Encoder-------------
         e1 = self.vgg16.layer1(x)  # 64 * 160 * 160
         e2 = self.vgg16.layer2(e1)  # 128 * 80 * 80
@@ -401,11 +417,9 @@ class BASNet(nn.Module):
         # -------------MIC-------------
         e5_pool = self.mic_max_pool(e5)
         mic_feature = self.mic_b2(self.mic_b1(e5_pool))  # 512 * 10 * 10
-        mic = self.mic_c1(mic_feature)  # 128 * 10 * 10
-        att = self.mic_a1(mic)  # 1 * 10 * 10
 
-        smc_logits, smc_l2norm = self.salient_map_clustering(mic * att)
-        return_result = {"smc_logits": smc_logits, "smc_l2norm": smc_l2norm}
+        mic = self.mic_c1(mic_feature)  # 128 * 10 * 10
+        return_result = self.attention_mic(mic=mic, return_result=return_result)
 
         # -------------Label-------------
         # cam = self.cluster_activation_map(smc_logits, mic)  # 簇激活图：Cluster Activation Map
@@ -434,10 +448,42 @@ class BASNet(nn.Module):
         # --------------Result-------------
         return return_result
 
-    def salient_map_clustering(self, mic):
-        smc_logits = F.adaptive_avg_pool2d(mic, output_size=(1, 1)).view((mic.size()[0], -1))
-        smc_l2norm = self.mic_l2norm(smc_logits)
-        return smc_logits, smc_l2norm
+    def attention_mic(self, mic, return_result={}):
+        view_shape = (mic.size()[0], -1)
+
+        mic_attention = mic
+        if self.has_attention:
+            att = self.mic_for_sigmoid_attention(mic_attention)  # 1 * 10 * 10  attention
+            return_result["attention_before_sigmoid"] = att
+            if self.sigmoid_attention:  # sigmoid attention
+                att = torch.sigmoid(att)  # 1 * 10 * 10
+                return_result["attention_after_sigmoid"] = att
+                pass
+
+            # Attention 1
+            mic_attention = mic * att
+
+            if self.softmax_attention:  # softmax attention
+                att = self.mic_for_softmax_attention(mic_attention)
+                return_result["attention_before_softmax"] = att
+                att = torch.softmax(att.view(view_shape), dim=-1).view_as(att)
+                return_result["attention_after_softmax"] = self._feature_norm(att)
+
+                # Attention 2
+                mic_attention = mic_attention * att
+
+                smc_logits = mic_attention.sum(3).sum(2).view(view_shape)  # sum global
+            else:
+                smc_logits = F.adaptive_avg_pool2d(mic_attention, output_size=(1, 1)).view(view_shape)  # avg global
+                pass
+            pass
+        else:
+            smc_logits = F.adaptive_avg_pool2d(mic_attention, output_size=(1, 1)).view(view_shape)
+            pass
+
+        return_result["smc_logits"] = smc_logits
+        return_result["smc_l2norm"] = self.mic_l2norm(smc_logits)
+        return return_result
 
     @staticmethod
     def cluster_activation_map(smc_logits, mic_feature):
@@ -471,10 +517,11 @@ class BASNet(nn.Module):
 class BASRunner(object):
 
     def __init__(self, batch_size_train=8, clustering_num=128, clustering_ratio=2, has_crf=False, size=256,
-                 only_mic=False, only_decoder=False, has_history=False, learning_rate=None, num_workers=32,
+                 only_mic=False, only_decoder=False, has_history=False, learning_rate=None,
+                 sigmoid_attention=True, softmax_attention=False, has_attention=True,
                  data_dir='/mnt/4T/Data/SOD/DUTS/DUTS-TR', tra_image_dir='DUTS-TR-Image',
                  tra_label_dir='DUTS-TR-Mask', model_dir="./saved_models/my_train_mic_only",
-                 history_dir="./history/my_train_mic5_large_history1"):
+                 history_dir="./history/my_train_mic5_large_history1", num_workers=32):
         self.batch_size_train = batch_size_train
         self.only_mic = only_mic
         self.only_decoder = only_decoder
@@ -497,7 +544,8 @@ class BASRunner(object):
                                           shuffle=True, num_workers=num_workers)
 
         # Model
-        self.net = BASNet(clustering_num=clustering_num)
+        self.net = BASNet(clustering_num=clustering_num, has_attention=has_attention,
+                          sigmoid_attention=sigmoid_attention, softmax_attention=softmax_attention)
 
         ###########################################################################
         if torch.cuda.is_available():
@@ -575,9 +623,9 @@ class BASRunner(object):
         loss_mic = self.mic_loss(mic_out, mic_labels)
         return loss_mic, loss_mic, loss_mic
 
-    def save_history_info(self, histories, params, indexes, name=None):
+    def save_history_info(self, histories, indexes, params, name=None):
         for history, param, index in zip(histories, params, indexes):
-            self.dataset_usod.save_history(idx=int(index), name=name, param=np.asarray(param),
+            self.dataset_usod.save_history(idx=int(index), name=name, param=param,
                                            his=np.asarray(history.squeeze().detach().cpu()))
         pass
 
@@ -720,6 +768,29 @@ class BASRunner(object):
         Tools.print()
         pass
 
+    def vis(self):
+        self.net.eval()
+        with torch.no_grad():
+            for _idx, (inputs, histories, image_for_crf, params, indexes) in tqdm(
+                    enumerate(self.dataloader_usod), total=len(self.dataloader_usod)):
+                inputs = inputs.type(torch.FloatTensor).cuda()
+
+                self.save_history_info(image_for_crf, indexes=indexes, params=params, name="image")
+
+                return_result = self.net(inputs)
+                for key in return_result.keys():
+                    if "attention_after" in key:
+                        value = return_result[key].detach()
+                        self.save_history_info(value, indexes=indexes, params=params, name=key)
+                        # value_crf = CRFTool.crf_torch(image_for_crf, value, t=5)
+                        # self.save_history_info(value_crf, indexes=indexes, params=params, name="{}_crf".format(key))
+                        pass
+                    pass
+
+                pass
+            pass
+        pass
+
     pass
 
 
@@ -729,30 +800,70 @@ class BASRunner(object):
 
 if __name__ == '__main__':
     """
-    2020-07-02 05:37:41 Epoch:499, lr=0.00010
-    2020-07-02 05:38:32 [E:499/500] loss:1.558 mic:1.558 sod:1.558
-    2020-07-02 05:38:32 Train: [499] 1-5601/936
-    2020-07-02 05:38:33 Save Model to ../BASNetTemp/saved_models/History1_CRF_FULL_1MIC_VGG_224/500_train_1.570.pth
+    2020-07-03 02:09:55 Epoch:499, lr=0.00010
+    2020-07-03 02:11:00 [E:499/500] loss:1.958 mic:1.958 sod:1.958
+    2020-07-03 02:11:00 Train: [499] 1-6250/754
+    2020-07-03 02:11:00 Save Model to ../BASNetTemp/saved_models/History1_CRF_FULL_1MIC_VGG_256/500_train_1.976.pth
+    
+    2020-07-03 02:10:31 Epoch:499, lr=0.00010
+    2020-07-03 02:11:33 [E:499/500] loss:1.964 mic:1.964 sod:1.964
+    2020-07-03 02:11:33 Train: [499] 1-6290/882
+    Save Model to ../BASNetTemp/saved_models/History1_CRF_FULL_1MIC_VGG_Attention_256_sigmoidTrue/500_train_1.982.pth
+    
+    
+    MIC1_VGG_256_AttentionTrue_sigmoidTrue_softmaxTrue
+    2020-07-03 23:29:26 Epoch:499, lr=0.00010
+    2020-07-03 23:31:10 [E:499/500] loss:2.272 mic:2.272 sod:2.272
+    2020-07-03 23:31:10 Train: [499] 1-7057/1038
+    Save Model to ../BASNetTemp/saved_models/MIC1_VGG_256_AttentionTrue_sigmoidTrue_softmaxTrue/500_train_2.279.pth
+    
+    MIC1_VGG_256_AttentionTrue_sigmoidTrue_softmaxFalse
+    2020-07-03 23:49:27 Epoch:499, lr=0.00010
+    2020-07-03 23:51:06 [E:499/500] loss:2.316 mic:2.316 sod:2.316
+    2020-07-03 23:51:06 Train: [499] 1-7151/1038
+    Save Model to ../BASNetTemp/saved_models/MIC1_VGG_256_AttentionTrue_sigmoidTrue_softmaxFalse/500_train_2.323.pth
+
+    MIC1_VGG_256_AttentionTrue_sigmoidFalse_softmaxFalse
+    2020-07-03 23:57:44 Epoch:499, lr=0.00010
+    2020-07-03 23:59:24 [E:499/500] loss:2.220 mic:2.220 sod:2.220
+    2020-07-03 23:59:24 Train: [499] 1-6929/916
+    Save Model to ../BASNetTemp/saved_models/MIC1_VGG_256_AttentionTrue_sigmoidFalse_softmaxFalse/500_train_2.227.pth
+
+    MIC1_VGG_256_AttentionTrue_sigmoidFalse_softmaxTrue
+    2020-07-03 23:58:06 Epoch:499, lr=0.00010
+    2020-07-03 23:59:43 [E:499/500] loss:2.222 mic:2.222 sod:2.222
+    2020-07-03 23:59:43 Train: [499] 1-6911/887
+    Save Model to ../BASNetTemp/saved_models/MIC1_VGG_256_AttentionTrue_sigmoidFalse_softmaxTrue/500_train_2.229.pth
     """
 
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "3"
 
     # _lr = [[0, 0.01], [300, 0.001], [400, 0.0001]]
-    _lr = [[0, 0.0001], [10, 0.001], [20, 0.01], [100, 0.001], [400, 0.0001]]
+    _lr = [[0, 0.0001], [10, 0.001], [20, 0.01], [200, 0.001], [400, 0.0001]]
     _epoch_num = 500
     _num_workers = 32
     _t = 5
     _sod_w = 2
     _size = 256
-    _name = "History1_CRF_FULL_1MIC_VGG_Attention_{}".format(_size)
+    _has_history = True
+    _has_attention = True
+    _sigmoid_attention = True
+    _softmax_attention = True
+    _name = "MIC1_VGG_{}_Attention{}_sigmoid{}_softmax{}".format(
+        _size, _has_attention, _sigmoid_attention, _softmax_attention)
     Tools.print(_name)
 
-    bas_runner = BASRunner(batch_size_train=16 * 6, clustering_num=128, clustering_ratio=2,
+    bas_runner = BASRunner(batch_size_train=16 * 2, clustering_num=128, clustering_ratio=2,
                            learning_rate=_lr, num_workers=_num_workers, size=_size,
-                           has_history=False, only_decoder=False, only_mic=True, has_crf=False,
+                           sigmoid_attention=_sigmoid_attention,
+                           softmax_attention=_softmax_attention,
+                           has_attention=_has_attention,
+                           has_history=_has_history, only_decoder=False, only_mic=True, has_crf=False,
                            data_dir="/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR",
                            history_dir="../BASNetTemp/history/{}".format(_name),
                            model_dir="../BASNetTemp/saved_models/{}".format(_name))
-    # bas_runner.load_model('../BASNetTemp/saved_models/my_train_mic5_large_history1_CRF_FULL_1MIC/500_train_1.461.pth')
-    bas_runner.train(epoch_num=_epoch_num, start_epoch=0, t=_t, sod_w=_sod_w, print_ite_num=0)
+    bas_runner.load_model(
+        '../BASNetTemp/saved_models/MIC1_VGG_256_AttentionTrue_sigmoidTrue_softmaxTrue/500_train_2.279.pth')
+    # bas_runner.train(epoch_num=_epoch_num, start_epoch=0, t=_t, sod_w=_sod_w, print_ite_num=0)
+    bas_runner.vis()
     pass

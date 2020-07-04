@@ -227,22 +227,24 @@ class DatasetUSOD(Dataset):
 
 class ConvBlock(nn.Module):
 
-    def __init__(self, cin, cout, stride=1, has_relu=True):
+    def __init__(self, cin, cout, stride=1, ks=3, padding=1, has_relu=True, has_bn=True, has_bias=True):
         super(ConvBlock, self).__init__()
         self.has_relu = has_relu
+        self.has_bn = has_bn
 
-        self.conv = nn.Conv2d(cin, cout, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.conv = nn.Conv2d(cin, cout, kernel_size=ks, stride=stride, padding=padding, bias=has_bias)
         self.bn = nn.BatchNorm2d(cout)
         self.relu = nn.ReLU(inplace=True)
 
-        self.conv.weight.data.normal_(0, math.sqrt(2. / 9 * cout))
+        torch.nn.init.xavier_uniform_(self.conv.weight)
         self.bn.weight.data.fill_(1)
         self.bn.bias.data.zero_()
         pass
 
     def forward(self, x):
         out = self.conv(x)
-        out = self.bn(out)
+        if self.has_bn:
+            out = self.bn(out)
         if self.has_relu:
             out = self.relu(out)
         return out
@@ -368,7 +370,8 @@ class BASNet(nn.Module):
         self.mic_max_pool = nn.MaxPool2d(2, 2)
         self.mic_b1 = ConvBlock(512, 512, 1, has_relu=True)  # 10 8 9
         self.mic_b2 = ConvBlock(512, 512, 1, has_relu=True)
-        self.mic_c1 = ConvBlock(512, self.clustering_num)
+
+        self.mic_c1 = ConvBlock(512, self.clustering_num, has_relu=False)
 
         # -------------Decoder-------------
         # self.decoder_0_b1 = ResBlock(512, 512)  # 10
@@ -397,8 +400,11 @@ class BASNet(nn.Module):
         e5 = self.vgg16.layer5(e4)  # 512 * 20 * 20
 
         # -------------MIC-------------
-        mic_feature = self.mic_b2(self.mic_b1(self.mic_max_pool(e5)))  # 512 * 10 * 10
+        e5_pool = self.mic_max_pool(e5)
+        mic_feature = self.mic_b2(self.mic_b1(e5_pool))  # 512 * 10 * 10
+
         mic = self.mic_c1(mic_feature)  # 128 * 10 * 10
+
         smc_logits, smc_l2norm = self.salient_map_clustering(mic)
         return_result = {"smc_logits": smc_logits, "smc_l2norm": smc_l2norm}
 
