@@ -286,37 +286,37 @@ class MICProduceClass(object):
 
 class BASNet(nn.Module):
 
-    def __init__(self, n_channels, clustering_num_list):
+    def __init__(self, n_channels, clustering_num_list=None):
         super(BASNet, self).__init__()
-        self.clustering_num_list = clustering_num_list
-
         resnet = models.resnet18(pretrained=False)
 
         # -------------Encoder--------------
-        self.encoder0 = ConvBlock(n_channels, 64, has_relu=True)  # 64 * 224 * 224
-        self.encoder1 = resnet.layer1  # 64 * 224 * 224
-        self.encoder2 = resnet.layer2  # 128 * 112 * 112
-        self.encoder3 = resnet.layer3  # 256 * 56 * 56
-        self.encoder4 = resnet.layer4  # 512 * 28 * 28
+        self.encoder0 = ConvBlock(n_channels, 64, has_relu=True)  # 224 256 320
+        self.encoder1 = resnet.layer1  # 224 256 320
+        self.encoder2 = resnet.layer2  # 112 128 160
+        self.encoder3 = resnet.layer3  # 56 64 80
+        self.encoder4 = resnet.layer4  # 28 32 40
 
         # -------------MIC-------------
+        self.clustering_num_list = list([128, 256, 512]) if clustering_num_list is None else clustering_num_list
+
         self.mic_l2norm = MICNormalize(2)
         self.mic_pool = nn.MaxPool2d(2, 2, ceil_mode=True)
 
         # MIC 1
-        self.mic_1_b1 = ResBlock(512, 512)  # 28
+        self.mic_1_b1 = ResBlock(512, 512)  # 28 32 40
         self.mic_1_b2 = ResBlock(512, 512)
         self.mic_1_b3 = ResBlock(512, 512)
         self.mic_1_c1 = ConvBlock(512, self.clustering_num_list[0], has_relu=True)
 
         # MIC 2
-        self.mic_2_b1 = ResBlock(512, 512)  # 14
+        self.mic_2_b1 = ResBlock(512, 512)  # 14 16 20
         self.mic_2_b2 = ResBlock(512, 512)
         self.mic_2_b3 = ResBlock(512, 512)
         self.mic_2_c1 = ConvBlock(512, self.clustering_num_list[1], has_relu=True)
 
         # MIC 3
-        self.mic_3_b1 = ResBlock(512, 512)  # 7
+        self.mic_3_b1 = ResBlock(512, 512)  # 7 8 10
         self.mic_3_b2 = ResBlock(512, 512)
         self.mic_3_b3 = ResBlock(512, 512)
         self.mic_3_c1 = ConvBlock(512, self.clustering_num_list[2], has_relu=True)
@@ -340,13 +340,13 @@ class BASNet(nn.Module):
         return_m1 = {"smc_logits": smc_logits_1, "smc_l2norm": smc_l2norm_1}
 
         # 2
-        mic_2_feature = self.mic_pool(self.mic_2_b3(self.mic_2_b2(self.mic_2_b1(mic_1_feature))))  # 512 * 14 * 14
+        mic_2_feature = self.mic_2_b3(self.mic_2_b2(self.mic_2_b1(self.mic_pool(mic_1_feature))))  # 512 * 14 * 14
         mic_2 = self.mic_2_c1(mic_2_feature)  # 256 * 14 * 14
         smc_logits_2, smc_l2norm_2 = self.salient_map_clustering(mic_2)
         return_m2 = {"smc_logits": smc_logits_2, "smc_l2norm": smc_l2norm_2}
 
         # 3
-        mic_3_feature = self.mic_pool(self.mic_3_b3(self.mic_3_b2(self.mic_3_b1(mic_2_feature))))  # 512 * 7 * 7
+        mic_3_feature = self.mic_3_b3(self.mic_3_b2(self.mic_3_b1(self.mic_pool(mic_2_feature))))  # 512 * 7 * 7
         mic_3 = self.mic_3_c1(mic_3_feature)  # 512 * 7 * 7
         smc_logits_3, smc_l2norm_3 = self.salient_map_clustering(mic_3)
         return_m3 = {"smc_logits": smc_logits_3, "smc_l2norm": smc_l2norm_3}
@@ -467,18 +467,7 @@ class BASRunner(object):
         # Loss and optimizer
         self.bce_loss = nn.BCELoss().cuda()
         self.mic_loss = nn.CrossEntropyLoss().cuda()
-        self.learning_rate = [[0, 0.001], [300, 0.0001], [400, 0.00001]]
-        self.optimizer = optim.Adam(self.net.parameters(),
-                                    lr=self.learning_rate[0][1], betas=(0.9, 0.999), weight_decay=1e-4)
-        pass
-
-    def _adjust_learning_rate(self, epoch):
-        for param_group in self.optimizer.param_groups:
-            for lr in self.learning_rate:
-                if epoch == lr[0]:
-                    learning_rate = lr[1]
-                    param_group['lr'] = learning_rate
-            pass
+        self.optimizer = optim.Adam(self.net.parameters(), lr=0.001, betas=(0.9, 0.999), weight_decay=0)
         pass
 
     def load_model(self, model_file_name):
@@ -528,9 +517,9 @@ class BASRunner(object):
 
                     return_m, _ = self.net(inputs)
 
-                    self.produce_class11.cal_label(return_m["m1"]["smc_l2norm"], indexes)
-                    self.produce_class21.cal_label(return_m["m2"]["smc_l2norm"], indexes)
-                    self.produce_class31.cal_label(return_m["m3"]["smc_l2norm"], indexes)
+                    self.produce_class11.cal_label(return_m["m1"]["smc_logits"], indexes)
+                    self.produce_class21.cal_label(return_m["m2"]["smc_logits"], indexes)
+                    self.produce_class31.cal_label(return_m["m3"]["smc_logits"], indexes)
                     pass
                 pass
             classes = self.produce_class12.classes
@@ -553,7 +542,6 @@ class BASRunner(object):
         all_loss = 0
         for epoch in range(start_epoch, epoch_num):
             Tools.print()
-            self._adjust_learning_rate(epoch)
             Tools.print('Epoch:{:03d}, lr={:.5f}'.format(epoch, self.optimizer.param_groups[0]['lr']))
 
             ###########################################################################
@@ -680,15 +668,25 @@ class BASRunner(object):
 #######################################################################################################################
 # 4 Main
 
+"""
+2020-07-11 10:16:24 [E:930/1000] loss:1.161 mic1:0.497 mic2:0.364 mic3:0.300 sod:0.000
+2020-07-11 10:16:24 Train: [930] 1-1231/521
+2020-07-11 10:16:24 Train: [930] 2-1077/464
+2020-07-11 10:16:24 Train: [930] 3-973/419
+2020-07-11 10:16:25 Save Model to ../BASNetTemp/saved_models/CAM_123_224/930_train_1.172.pth
+"""
+
 
 if __name__ == '__main__':
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
 
-    _size = 256
+    _size = 224
     _name = "CAM_123_{}".format(_size)
-    bas_runner = BASRunner(batch_size_train=16 * 2, data_dir="/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR",
+    bas_runner = BASRunner(batch_size_train=16 * 6, data_dir="/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR",
                            clustering_num_1=128 * 4, clustering_num_2=128 * 4, clustering_num_3=128 * 4,
                            size=_size, cam_dir="../BASNetTemp/cam/{}".format(_name), save_cam=False,
                            model_dir="../BASNetTemp/saved_models/{}".format(_name))
-    bas_runner.train(epoch_num=500, start_epoch=0)
+    # bas_runner.load_model(model_file_name="../BASNetTemp/saved_models/CAM_123_224/500_train_5.874.pth")
+    # bas_runner.load_model(model_file_name="../BASNetTemp/saved_models/CAM_123_256/500_train_6.868.pth")
+    bas_runner.train(epoch_num=1000, start_epoch=0)
     pass

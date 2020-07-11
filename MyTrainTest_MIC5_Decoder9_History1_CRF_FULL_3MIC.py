@@ -584,7 +584,7 @@ class BASRunner(object):
         self.mic_loss = nn.CrossEntropyLoss().cuda()
         self.learning_rate = [[0, 0.001], [100, 0.0001], [150, 0.00001]] if learning_rate is None else learning_rate
         self.optimizer = optim.Adam(self.net.parameters(),
-                                    lr=self.learning_rate[0][1], betas=(0.9, 0.999), weight_decay=1e-4)
+                                    lr=self.learning_rate[0][1], betas=(0.9, 0.999), weight_decay=0)
         pass
 
     def _adjust_learning_rate(self, epoch):

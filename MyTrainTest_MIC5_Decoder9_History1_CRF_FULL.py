@@ -6,7 +6,6 @@ import numpy as np
 from tqdm import tqdm
 import torch.nn as nn
 from PIL import Image
-from skimage import io
 import torch.optim as optim
 from torchvision import models
 import torch.nn.functional as F
@@ -14,7 +13,6 @@ import pydensecrf.densecrf as dcrf
 from torchvision import transforms
 from alisuretool.Tools import Tools
 import torch.backends.cudnn as cudnn
-from multiprocessing.pool import Pool
 from pydensecrf.utils import unary_from_softmax
 from torch.utils.data import DataLoader, Dataset
 from torchvision.models.resnet import BasicBlock as ResBlock
@@ -545,7 +543,7 @@ class BASRunner(object):
         self.mic_loss = nn.CrossEntropyLoss().cuda()
         self.learning_rate = [[0, 0.001], [100, 0.0001], [150, 0.00001]]
         self.optimizer = optim.Adam(self.net.parameters(),
-                                    lr=self.learning_rate[0][1], betas=(0.9, 0.999), weight_decay=1e-4)
+                                    lr=self.learning_rate[0][1], betas=(0.9, 0.999), weight_decay=0)
         pass
 
     def _adjust_learning_rate(self, epoch):

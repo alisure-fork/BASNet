@@ -311,7 +311,7 @@ class BASRunner(object):
         self.bce_loss = self.bce_loss.cuda() if torch.cuda.is_available() else self.bce_loss
         self.mic_loss = self.mic_loss.cuda() if torch.cuda.is_available() else self.mic_loss
 
-        self.learning_rate = [[0, 0.01], [400, 0.001]]
+        self.learning_rate = [[0, 0.001], [400, 0.001]]
         self.optimizer = optim.Adam(self.net.parameters(), lr=self.learning_rate[0][1],
                                     betas=(0.9, 0.999), weight_decay=0)
         pass
@@ -351,7 +351,7 @@ class BASRunner(object):
 
     def train(self, epoch_num=200, start_epoch=0, save_epoch_freq=10, print_ite_num=100):
 
-        if start_epoch > 0:
+        if start_epoch >= 0:
             self.net.eval()
             Tools.print("Update label {} .......".format(start_epoch))
             self.produce_class11.reset()
@@ -490,13 +490,18 @@ class BASRunner(object):
 #######################################################################################################################
 # 4 Main
 
+"""
+2020-07-08 22:37:55 [E:499/500] loss:2.130 mic 1:0.914 mic2:0.654 mic3:0.562
+2020-07-08 22:37:55 Train: [499] 1-2201/685
+2020-07-08 22:37:55 Train: [499] 2-1653/530
+2020-07-08 22:37:55 Train: [499] 3-1484/523
+
+2020-07-08 22:37:56 Save Model to ../BASNetTemp/saved_models/MyTrain_MIC5_224/500_train_2.133.pth
+"""
+
 
 if __name__ == '__main__':
     os.environ["CUDA_VISIBLE_DEVICES"] = "1"
-
-    """
-    2020-06-15 06:11:23 [E:299/300] loss:3.849 mic 1:1.476 mic2:1.213 mic3:1.159
-    """
 
     _size = 224
     _name = "MyTrain_MIC5_{}".format(_size)
@@ -505,5 +510,5 @@ if __name__ == '__main__':
                            size=_size,
                            model_dir="../BASNetTemp/saved_models/{}".format(_name))
     # bas_runner.load_model('../BASNetTemp/saved_models/{}/500_train_0.880.pth'.format(_name))
-    bas_runner.train(epoch_num=500, start_epoch=1)
+    bas_runner.train(epoch_num=500, start_epoch=0)
     pass
