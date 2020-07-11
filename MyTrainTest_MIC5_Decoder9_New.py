@@ -13,7 +13,6 @@ import pydensecrf.densecrf as dcrf
 from torchvision import transforms
 from alisuretool.Tools import Tools
 import torch.backends.cudnn as cudnn
-from multiprocessing.pool import Pool
 from pydensecrf.utils import unary_from_softmax
 from torch.utils.data import DataLoader, Dataset
 from torchvision.models.resnet import BasicBlock as ResBlock
@@ -75,7 +74,7 @@ class RandomResizedCrop(transforms.RandomResizedCrop):
     pass
 
 
-class RandomResized(object):
+class FixedResized(object):
 
     def __init__(self, img_w=300, img_h=300):
         self.img_w, self.img_h = img_w, img_h
@@ -149,22 +148,23 @@ class Compose(transforms.Compose):
 
 class DatasetUSOD(Dataset):
 
-    def __init__(self, img_name_list, cam_name_list=None, size=224):
+    def __init__(self, img_name_list, cam_name_list=None, size_train=224, size_vis=256):
         self.image_name_list = img_name_list
         self.cam_name_list = cam_name_list
 
-        self.transform_train = Compose([RandomResizedCrop(size=size, scale=(0.3, 1.)),
-                                        ColorJitter(0.4, 0.4, 0.4, 0.4), RandomGrayscale(p=0.2), RandomHorizontalFlip(),
-                                        ToTensor(), Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))])
-        self.transform_test = Compose([RandomResized(size, size),
-                                       ToTensor(), Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))])
+        self.transform_train = Compose([RandomResizedCrop(size=size_train, scale=(0.3, 1.)),
+                                        ColorJitter(0.4, 0.4, 0.4, 0.4), RandomGrayscale(p=0.2),
+                                        RandomHorizontalFlip(), ToTensor(),
+                                        Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))])
+        self.transform_vis = Compose([FixedResized(size_vis, size_vis), ToTensor(),
+                                      Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))])
         self.transform = self.set_transform()
 
         self.image_size_list = [Image.open(image_name).size for image_name in self.image_name_list]
         pass
 
     def set_transform(self, is_train=True):
-        self.transform = self.transform_train if is_train else self.transform_test
+        self.transform = self.transform_train if is_train else self.transform_vis
         return self.transform
 
     def __len__(self):
@@ -351,6 +351,8 @@ class BASNet(nn.Module):
         smc_logits_3, smc_l2norm_3 = self.salient_map_clustering(mic_3)
         return_m3 = {"smc_logits": smc_logits_3, "smc_l2norm": smc_l2norm_3}
 
+        return_m = {"m1": return_m1, "m2": return_m2, "m3": return_m3}
+
         # -------------Label-------------
         cam_1 = self.cluster_activation_map(smc_logits_1, mic_1)  # 簇激活图：Cluster Activation Map
         cam_1_up = self._up_to_target(cam_1, x_for_up)
@@ -364,17 +366,13 @@ class BASNet(nn.Module):
         cam_3_up = self._up_to_target(cam_3, cam_1_up)
         cam_3_up_norm = self._feature_norm(cam_3_up)
 
-        cam_up_norm = (cam_1_up_norm + cam_2_up_norm + cam_3_up_norm) / 3
-        # cam_up_norm = (cam_2_up_norm + cam_3_up_norm) / 2
-        # cam_up_norm = cam_3_up_norm
+        cam_up_norm_123 = (cam_1_up_norm + cam_2_up_norm + cam_3_up_norm) / 3
+        cam_up_norm_23 = (cam_2_up_norm + cam_3_up_norm) / 2
 
-        # label = self.salient_map_divide(cam_up_norm, obj_th=0.8, bg_th=0.2, more_obj=False)  # 显著图划分
-        label = cam_up_norm
-
-        return_l = {"label": label, "cam_up_norm": cam_up_norm, "cam_1_up_norm": cam_1_up_norm,
+        return_l = {"cam_up_norm": cam_up_norm_123, "cam_up_norm_123": cam_up_norm_123,
+                    "cam_up_norm_23": cam_up_norm_23, "cam_1_up_norm": cam_1_up_norm,
                     "cam_2_up_norm": cam_2_up_norm, "cam_3_up_norm": cam_3_up_norm}
 
-        return_m = {"m1": return_m1, "m2": return_m2, "m3": return_m3}
         return return_m, return_l
 
     def salient_map_clustering(self, mic):
@@ -413,11 +411,12 @@ class BASNet(nn.Module):
 
 class BASRunner(object):
 
-    def __init__(self, batch_size_train=8, clustering_num_1=128, clustering_num_2=256, clustering_num_3=512,
-                 size=224, clustering_ratio_1=1, clustering_ratio_2=1.5, clustering_ratio_3=2, save_cam=False,
+    def __init__(self, batch_size=8, size_train=224, size_vis=256, save_cam=False,
+                 clustering_num_1=128, clustering_num_2=256, clustering_num_3=512,
+                 clustering_ratio_1=1, clustering_ratio_2=1.5, clustering_ratio_3=2,
                  data_dir='/mnt/4T/Data/SOD/DUTS/DUTS-TR', tra_image_dir='DUTS-TR-Image',
                  tra_label_dir='DUTS-TR-Mask', model_dir="./saved_models/cam", cam_dir="./cam/cam"):
-        self.batch_size_train = batch_size_train
+        self.batch_size = batch_size
 
         self.save_cam = save_cam
         self.cam_dir = Tools.new_dir(cam_dir)
@@ -430,10 +429,12 @@ class BASRunner(object):
         self.tra_img_name_list, tra_lbl_name_list, self.tra_cam_name_list = self.get_tra_img_label_name()
 
         self.tra_cam_name_list = self.tra_cam_name_list if self.save_cam else None
-        self.dataset_usod = DatasetUSOD(img_name_list=self.tra_img_name_list,
-                                        cam_name_list=self.tra_cam_name_list, size=size)
-        self.dataset_usod.set_transform(is_train=True)
-        self.dataloader_usod = DataLoader(self.dataset_usod, self.batch_size_train, shuffle=True, num_workers=32)
+        self.dataset_sod = DatasetUSOD(img_name_list=self.tra_img_name_list, cam_name_list=self.tra_cam_name_list,
+                                       size_train=size_train, size_vis=size_vis)
+        self.data_num = len(self.dataset_sod)
+        self.dataset_sod.set_transform(is_train=True)
+        self.data_loader_sod = DataLoader(self.dataset_sod, self.batch_size, shuffle=True, num_workers=32)
+        self.data_batch_num = len(self.data_loader_sod)
 
         # Model
         self.net = BASNet(3, clustering_num_list=[clustering_num_1, clustering_num_2, clustering_num_3])
@@ -445,18 +446,12 @@ class BASRunner(object):
         ###########################################################################
 
         # MIC
-        self.produce_class11 = MICProduceClass(n_sample=len(self.dataset_usod),
-                                               out_dim=clustering_num_1, ratio=clustering_ratio_1)
-        self.produce_class21 = MICProduceClass(n_sample=len(self.dataset_usod),
-                                               out_dim=clustering_num_2, ratio=clustering_ratio_2)
-        self.produce_class31 = MICProduceClass(n_sample=len(self.dataset_usod),
-                                               out_dim=clustering_num_3, ratio=clustering_ratio_3)
-        self.produce_class12 = MICProduceClass(n_sample=len(self.dataset_usod),
-                                               out_dim=clustering_num_1, ratio=clustering_ratio_1)
-        self.produce_class22 = MICProduceClass(n_sample=len(self.dataset_usod),
-                                               out_dim=clustering_num_2, ratio=clustering_ratio_2)
-        self.produce_class32 = MICProduceClass(n_sample=len(self.dataset_usod),
-                                               out_dim=clustering_num_3, ratio=clustering_ratio_3)
+        self.produce_class11 = MICProduceClass(self.data_num, out_dim=clustering_num_1, ratio=clustering_ratio_1)
+        self.produce_class21 = MICProduceClass(self.data_num, out_dim=clustering_num_2, ratio=clustering_ratio_2)
+        self.produce_class31 = MICProduceClass(self.data_num, out_dim=clustering_num_3, ratio=clustering_ratio_3)
+        self.produce_class12 = MICProduceClass(self.data_num, out_dim=clustering_num_1, ratio=clustering_ratio_1)
+        self.produce_class22 = MICProduceClass(self.data_num, out_dim=clustering_num_2, ratio=clustering_ratio_2)
+        self.produce_class32 = MICProduceClass(self.data_num, out_dim=clustering_num_3, ratio=clustering_ratio_3)
         self.produce_class11.init()
         self.produce_class21.init()
         self.produce_class31.init()
@@ -498,7 +493,7 @@ class BASRunner(object):
 
     def save_cam_info(self, cams, indexes, name=None):
         for cam, index in zip(cams, indexes):
-            self.dataset_usod.save_cam(idx=int(index), cam=np.asarray(cam.squeeze().detach().cpu()), name=name)
+            self.dataset_sod.save_cam(idx=int(index), cam=np.asarray(cam.squeeze().detach().cpu()), name=name)
         pass
 
     def train(self, epoch_num=200, start_epoch=0, save_epoch_freq=10, print_ite_num=50):
@@ -510,8 +505,7 @@ class BASRunner(object):
             self.produce_class21.reset()
             self.produce_class31.reset()
             with torch.no_grad():
-                for _idx, (inputs, _, indexes) in tqdm(enumerate(self.dataloader_usod),
-                                                       total=len(self.dataloader_usod)):
+                for _idx, (inputs, _, indexes) in tqdm(enumerate(self.data_loader_sod), total=self.data_batch_num):
                     inputs = inputs.type(torch.FloatTensor).cuda()
                     indexes = indexes.cuda()
 
@@ -553,7 +547,7 @@ class BASRunner(object):
             self.produce_class21.reset()
             self.produce_class31.reset()
 
-            for i, (inputs, _, indexes) in tqdm(enumerate(self.dataloader_usod), total=len(self.dataloader_usod)):
+            for i, (inputs, _, indexes) in tqdm(enumerate(self.data_loader_sod), total=self.data_batch_num):
                 inputs = inputs.type(torch.FloatTensor).cuda()
                 indexes = indexes.cuda()
                 self.optimizer.zero_grad()
@@ -584,22 +578,19 @@ class BASRunner(object):
                 all_loss_mic_2 += loss_mic[1].item()
                 all_loss_mic_3 += loss_mic[2].item()
                 if i % print_ite_num == 0:
-                    Tools.print("[E:{:4d}/{:4d}, b:{:4d}/{:4d}] l:{:.2f}/{:.2f} mic1:{:.2f}/{:.2f} mic2:{:.2f}/{:.2f} "
-                                "mic3:{:.2f}/{:.2f}".format(epoch, epoch_num, i, len(self.dataloader_usod),
-                                                            all_loss/(i+1), loss.item(),
-                                                            all_loss_mic_1/(i+1), loss_mic[0].item(),
-                                                            all_loss_mic_2/(i+1), loss_mic[1].item(),
-                                                            all_loss_mic_3/(i+1), loss_mic[2].item()))
+                    Tools.print("[E:{:4d}/{:4d},b:{:4d}/{:4d}] l:{:.2f}/{:.2f} mic:{:.2f}/{:.2f}-{:.2f}/{:.2f}-"
+                                "{:.2f}/{:.2f}".format(epoch, epoch_num, i, self.data_batch_num, all_loss / (i + 1),
+                                                       loss.item(), all_loss_mic_1 / (i + 1), loss_mic[0].item(),
+                                                       all_loss_mic_2 / (i + 1), loss_mic[1].item(),
+                                                       all_loss_mic_3 / (i + 1), loss_mic[2].item()))
                     pass
 
                 pass
 
             Tools.print("[E:{:3d}/{:3d}] loss:{:.3f} mic1:{:.3f} mic2:{:.3f} mic3:{:.3f} sod:{:.3f}".format(
-                epoch, epoch_num, all_loss / (len(self.dataloader_usod) + 1),
-                all_loss_mic_1 / (len(self.dataloader_usod) + 1),
-                all_loss_mic_2 / (len(self.dataloader_usod) + 1),
-                all_loss_mic_3 / (len(self.dataloader_usod) + 1),
-                all_loss_sod / (len(self.dataloader_usod) + 1)))
+                epoch, epoch_num, all_loss / self.data_batch_num,
+                all_loss_mic_1 / self.data_batch_num, all_loss_mic_2 / self.data_batch_num,
+                all_loss_mic_3 / self.data_batch_num, all_loss_sod / self.data_batch_num))
 
             classes = self.produce_class12.classes
             self.produce_class12.classes = self.produce_class11.classes
@@ -618,7 +609,7 @@ class BASRunner(object):
             # 2 保存模型
             if epoch % save_epoch_freq == 0:
                 save_file_name = Tools.new_dir(os.path.join(
-                    self.model_dir, "{}_train_{:.3f}.pth".format(epoch, all_loss / len(self.dataloader_usod))))
+                    self.model_dir, "{}_train_{:.3f}.pth".format(epoch, all_loss / self.data_batch_num)))
                 torch.save(self.net.state_dict(), save_file_name)
 
                 Tools.print()
@@ -631,7 +622,7 @@ class BASRunner(object):
 
         # Final Save
         save_file_name = Tools.new_dir(os.path.join(
-            self.model_dir, "{}_train_{:.3f}.pth".format(epoch_num, all_loss / len(self.dataloader_usod))))
+            self.model_dir, "{}_train_{:.3f}.pth".format(epoch_num, all_loss / self.data_batch_num)))
         torch.save(self.net.state_dict(), save_file_name)
 
         Tools.print()
@@ -642,10 +633,10 @@ class BASRunner(object):
     def vis(self):
         self.net.eval()
         with torch.no_grad():
-            self.dataset_usod.set_transform(is_train=False)
-            self.dataloader_usod.dataset.set_transform(is_train=False)
-            for _idx, (inputs, histories, image_for_crf, params, indexes) in tqdm(
-                    enumerate(self.dataloader_usod), total=len(self.dataloader_usod)):
+            self.dataset_sod.set_transform(is_train=False)
+            self.data_loader_sod.dataset.set_transform(is_train=False)
+            for _idx, (inputs, image_for_crf, indexes) in tqdm(
+                    enumerate(self.data_loader_sod), total=self.data_batch_num):
                 inputs = inputs.type(torch.FloatTensor).cuda()
 
                 self.save_cam_info(image_for_crf, indexes=indexes, name="image")
@@ -678,15 +669,27 @@ class BASRunner(object):
 
 
 if __name__ == '__main__':
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
+    _is_train = False
 
-    _size = 224
-    _name = "CAM_123_{}".format(_size)
-    bas_runner = BASRunner(batch_size_train=16 * 6, data_dir="/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR",
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3" if _is_train else "3"
+    _batch_size = 16 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
+
+    _size_train = 224
+    _size_vis = 256
+    _name = "CAM_123_{}_{}".format(_size_train, _size_vis)
+
+    bas_runner = BASRunner(batch_size=_batch_size, size_train=_size_train, size_vis=_size_vis,
                            clustering_num_1=128 * 4, clustering_num_2=128 * 4, clustering_num_3=128 * 4,
-                           size=_size, cam_dir="../BASNetTemp/cam/{}".format(_name), save_cam=False,
+                           clustering_ratio_1=1, clustering_ratio_2=1.5, clustering_ratio_3=2,
+                           data_dir="/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR",
+                           cam_dir="../BASNetTemp/cam/{}".format(_name), save_cam=not _is_train,
                            model_dir="../BASNetTemp/saved_models/{}".format(_name))
-    # bas_runner.load_model(model_file_name="../BASNetTemp/saved_models/CAM_123_224/500_train_5.874.pth")
-    # bas_runner.load_model(model_file_name="../BASNetTemp/saved_models/CAM_123_256/500_train_6.868.pth")
-    bas_runner.train(epoch_num=1000, start_epoch=0)
+
+    if _is_train:  # 训练
+        bas_runner.train(epoch_num=1000, start_epoch=0)
+    else:  # 得到响应图
+        bas_runner.load_model(model_file_name="../BASNetTemp/saved_models/CAM_123_224_256/930_train_1.172.pth")
+        bas_runner.vis()
+        pass
+
     pass

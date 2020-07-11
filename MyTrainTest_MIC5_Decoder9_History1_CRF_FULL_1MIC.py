@@ -166,10 +166,10 @@ class DatasetUSOD(Dataset):
 
         self.is_train = is_train
 
-        transform_train = Compose([RandomResizedCrop(size=320, scale=(0.3, 1.)), ColorJitter(0.4, 0.4, 0.4, 0.4),
+        transform_train = Compose([RandomResizedCrop(size=224, scale=(0.3, 1.)), ColorJitter(0.4, 0.4, 0.4, 0.4),
                                    RandomGrayscale(p=0.2), RandomHorizontalFlip(),
                                    ToTensor(), Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))])
-        transform_train_sod = Compose([RandomResized(img_w=320, img_h=320), RandomHorizontalFlip(),
+        transform_train_sod = Compose([RandomResized(img_w=224, img_h=224), RandomHorizontalFlip(),
                                        ToTensor(), Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))])
 
         self.transform_train = transform_train if only_mic else transform_train_sod
@@ -732,34 +732,35 @@ class BASRunner(object):
 
 if __name__ == '__main__':
     """
-    2020-07-02 09:26:05 Epoch:260, lr=0.00100
-    2020-07-02 09:28:29 [E:260/500] loss:1.789 mic:1.789 sod:1.789
-    2020-07-02 09:28:29 Train: [260] 1-6143/899
-    2020-07-02 09:28:29 Save Model to ../BASNetTemp/saved_models/History1_CRF_FULL_1MIC_320/260_train_1.793.pth
+    020-07-11 15:15:33 [E:499/500] loss:0.745 mic:0.745 sod:0.745
+    2020-07-11 15:15:33 Train: [499] 1-2440/458
+    2020-07-11 15:15:33 Save Model to ../BASNetTemp/saved_models/History1_CRF_FULL_1MIC_224/500_train_0.754.pth
     """
 
-    # os.environ["CUDA_VISIBLE_DEVICES"] = "2, 3"
-    os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
 
     # _pretrained_path = "./pre_model/resnet18_486_48.39.t7"
     _pretrained_path = None
 
-    # _lr = [[0, 0.01], [400, 0.001]]
-    _lr = [[0, 0.001], [400, 0.0001]]
-    _epoch_num = 500
+    # _lr = [[0, 0.001], [400, 0.0001]]
+    # _epoch_num = 500
+
+    _lr = [[0, 0.001], [400, 0.001]]
+    _epoch_num = 800
+
     _num_workers = 32
     _t = 5
     _sod_w = 2
-    _name = "History1_CRF_FULL_1MIC_320"
+    _name = "History1_CRF_FULL_1MIC_224"
     Tools.print(_name)
 
-    bas_runner = BASRunner(batch_size_train=12 * 2, clustering_num=128, clustering_ratio=5,
+    bas_runner = BASRunner(batch_size_train=16 * 8, clustering_num=128, clustering_ratio=5,
                            learning_rate=_lr, num_workers=_num_workers,
                            has_history=False, only_decoder=False, only_mic=True, has_crf=False,
                            pretrained_path=_pretrained_path,
                            data_dir="/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR",
                            history_dir="../BASNetTemp/history/{}".format(_name),
                            model_dir="../BASNetTemp/saved_models/{}".format(_name))
-    bas_runner.load_model('../BASNetTemp/saved_models/History1_CRF_FULL_1MIC_320/160_train_2.032.pth')
+    # bas_runner.load_model('../BASNetTemp/saved_models/History1_CRF_FULL_1MIC_320/160_train_2.032.pth')
     bas_runner.train(epoch_num=_epoch_num, start_epoch=0, t=_t, sod_w=_sod_w, print_ite_num=0)
     pass
