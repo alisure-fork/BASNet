@@ -316,8 +316,10 @@ class MICProduceClass(object):
 
 class BASNet(nn.Module):
 
-    def __init__(self, n_channels, clustering_num_list=None):
+    def __init__(self, n_channels, is_weight_sum=False, clustering_num_list=None):
         super(BASNet, self).__init__()
+        self.is_weight_sum = is_weight_sum
+
         resnet = models.resnet18(pretrained=False)
 
         # -------------Encoder--------------
@@ -412,10 +414,15 @@ class BASNet(nn.Module):
         smc_l2norm = self.mic_l2norm(smc_logits)
         return smc_logits, smc_l2norm
 
-    @staticmethod
-    def cluster_activation_map(smc_logits, mic_feature):
-        top_k_value, top_k_index = torch.topk(smc_logits, 1, 1)
-        cam = torch.cat([mic_feature[i:i+1, top_k_index[i], :, :] for i in range(mic_feature.size()[0])])
+    def cluster_activation_map(self, smc_logits, mic_feature):
+        if self.is_weight_sum:
+            smc_soft_max = torch.softmax(smc_logits, dim=-1)
+            weight = torch.unsqueeze(torch.unsqueeze(smc_soft_max, dim=-1),
+                                     dim=-1).repeat(1, 1, mic_feature.shape[-2], mic_feature.shape[-1])
+            cam = torch.sum(weight * mic_feature, dim=1, keepdim=True)
+        else:
+            top_k_value, top_k_index = torch.topk(smc_logits, 1, 1)
+            cam = torch.cat([mic_feature[i:i+1, top_k_index[i], :, :] for i in range(mic_feature.size()[0])])
         return cam
 
     @staticmethod
@@ -444,7 +451,7 @@ class BASNet(nn.Module):
 class BASRunner(object):
 
     def __init__(self, batch_size=8, multi_num=16, size_train=224, size_vis=256, is_train=True,
-                 clustering_num_1=128, clustering_num_2=256, clustering_num_3=512,
+                 clustering_num_1=128, clustering_num_2=256, clustering_num_3=512, is_weight_sum=False,
                  clustering_ratio_1=1, clustering_ratio_2=1.5, clustering_ratio_3=2,
                  data_dir='/mnt/4T/Data/SOD/DUTS/DUTS-TR', tra_image_dir='DUTS-TR-Image',
                  tra_label_dir='DUTS-TR-Mask', model_dir="./saved_models/cam", cam_dir="./cam/cam"):
@@ -473,7 +480,8 @@ class BASRunner(object):
         self.data_batch_num = len(self.data_loader_sod)
 
         # Model
-        self.net = BASNet(3, clustering_num_list=[clustering_num_1, clustering_num_2, clustering_num_3])
+        self.net = BASNet(3, is_weight_sum=is_weight_sum,
+                          clustering_num_list=[clustering_num_1, clustering_num_2, clustering_num_3])
         if torch.cuda.is_available():
             self.net = nn.DataParallel(self.net).cuda()
             cudnn.benchmark = True
@@ -713,23 +721,26 @@ class BASRunner(object):
 """
 1.多个增强融合
 2.多个模型融合
-3.判断那些样本参加训练
-4.如何进行端到端训练
+3.输出正则归一化
+4.判断那些样本参加训练
+5.如何进行端到端训练
+6.Weight Sum
 """
 
 if __name__ == '__main__':
     _is_train = False
 
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3" if _is_train else "2"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3" if _is_train else "0"
     _batch_size = 16 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
 
+    _is_weight_sum = True
     _size_train = 224
     _size_vis = 256
-    _multi_num = 30
+    _multi_num = 10
     _name_model = "CAM_123_{}_{}".format(_size_train, _size_vis)
-    _name_cam = "CAM_123_{}_{}_AVG_{}".format(_size_train, _size_vis, _multi_num)
+    _name_cam = "CAM_123_{}_{}_AVG_{}{}".format(_size_train, _size_vis, _multi_num, "_S" if _is_weight_sum else "")
 
-    bas_runner = BASRunner(batch_size=_batch_size, multi_num=_multi_num,
+    bas_runner = BASRunner(batch_size=_batch_size, multi_num=_multi_num, is_weight_sum=_is_weight_sum,
                            size_train=_size_train, size_vis=_size_vis, is_train=_is_train,
                            clustering_num_1=128 * 4, clustering_num_2=128 * 4, clustering_num_3=128 * 4,
                            clustering_ratio_1=1, clustering_ratio_2=1.5, clustering_ratio_3=2,
