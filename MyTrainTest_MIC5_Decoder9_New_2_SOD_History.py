@@ -67,53 +67,58 @@ class FixedResized(object):
         self.img_w, self.img_h = img_w, img_h
         pass
 
-    def __call__(self, img, label, image_crf=None):
+    def __call__(self, img, label, image_crf=None, param=None):
         img = img.resize((self.img_w, self.img_h))
         label = label.resize((self.img_w, self.img_h))
         if image_crf is not None:
             image_crf = image_crf.resize((self.img_w, self.img_h))
-        return img, label, image_crf
+        return img, label, image_crf, param
 
     pass
 
 
 class RandomHorizontalFlip(transforms.RandomHorizontalFlip):
-    def __call__(self, img, label, image_crf=None):
+    def __call__(self, img, label, image_crf=None, param=None):
         if random.random() < self.p:
             img = transforms.functional.hflip(img)
             label = transforms.functional.hflip(label)
             if image_crf is not None:
                 image_crf = transforms.functional.hflip(image_crf)
+            if param is not None:
+                param.append(1)
             pass
-        return img, label, image_crf
+        else:
+            if param is not None:
+                param.append(0)
+        return img, label, image_crf, param
 
     pass
 
 
 class ToTensor(transforms.ToTensor):
-    def __call__(self, img, label, image_crf=None):
+    def __call__(self, img, label, image_crf=None, param=None):
         img = super().__call__(img)
         label = super().__call__(label)
         if image_crf is not None:
             image_crf = super().__call__(image_crf)
-        return img, label, image_crf
+        return img, label, image_crf, param
 
     pass
 
 
 class Normalize(transforms.Normalize):
-    def __call__(self, img, label, image_crf=None):
+    def __call__(self, img, label, image_crf=None, param=None):
         img = super().__call__(img)
-        return img, label, image_crf
+        return img, label, image_crf, param
 
     pass
 
 
 class Compose(transforms.Compose):
-    def __call__(self, img, label, image_crf=None):
+    def __call__(self, img, label, image_crf=None, param=None):
         for t in self.transforms:
-            img, label, image_crf = t(img, label, image_crf)
-        return img, label, image_crf
+            img, label, image_crf, param = t(img, label, image_crf, param)
+        return img, label, image_crf, param
 
     pass
 
@@ -148,12 +153,13 @@ class DatasetUSOD(Dataset):
     def __getitem__(self, idx):
         assert self.lab_name_list is not None
 
+        param = []
         image = Image.open(self.img_name_list[idx]).convert("RGB")
         if os.path.exists(self.lab_name_list[idx]):
             label = Image.open(self.lab_name_list[idx]).convert("L")
         else:
             label = Image.fromarray(np.zeros_like(np.asarray(image), dtype=np.uint8)).convert("L")
-        image, label, image_for_crf = self.transform(image, label, image)
+        image, label, image_for_crf, param = self.transform(image, label, image, param)
 
         if self.is_filter:
             num = np.sum(np.asarray(label))
@@ -161,10 +167,10 @@ class DatasetUSOD(Dataset):
             ratio = num / num_all
             if ratio < 0.01 or ratio > 0.9:
                 Tools.print("{} {:.4f} {}".format(idx, ratio, self.lab_name_list[idx]))
-                image, label, image_for_crf, idx = self.__getitem__(np.random.randint(0, self.__len__()))
+                image, label, image_for_crf, idx, param = self.__getitem__(np.random.randint(0, self.__len__()))
             pass
 
-        return image, label, image_for_crf, idx
+        return image, label, image_for_crf, idx, param
 
     def save_history(self, history, idx):
         h_path = self.his_lbl_name_list[idx]
@@ -193,7 +199,7 @@ class DatasetEvalUSOD(Dataset):
     def __getitem__(self, idx):
         image = Image.open(self.image_name_list[idx]).convert("RGB")
         label = Image.open(self.label_name_list[idx]).convert("L")
-        image, label, image_for_crf = self.transform(image, label, image)
+        image, label, image_for_crf, _ = self.transform(image, label, image, None)
         return image, label, image_for_crf
 
     @staticmethod
@@ -339,7 +345,7 @@ class BASRunner(object):
 
         # Loss and optimizer
         self.bce_loss = nn.BCELoss().cuda()
-        self.learning_rate = [[0, 0.001], [30, 0.0001], [40, 0.00001]]
+        self.learning_rate = [[0, 0.001], [70, 0.0001], [90, 0.00001]]
         self.optimizer = optim.Adam(self.net.parameters(), lr=self.learning_rate[0][1])
         pass
 
@@ -385,7 +391,7 @@ class BASRunner(object):
             self.dataset_sod.save_history(idx=int(index), history=np.asarray(history.squeeze()))
         pass
 
-    def train(self, epoch_num=200, start_epoch=0, save_epoch_freq=10,
+    def train(self, epoch_num=200, start_epoch=0, save_epoch_freq=10, which_history=1,
               is_supervised=False, has_history=False, history_start_epoch=1):
         self.dataset_sod.set_label(is_supervised=is_supervised, has_history=False)
 
@@ -406,8 +412,8 @@ class BASRunner(object):
             all_loss = 0.0
             Tools.print()
             self.net.train()
-            for i, (inputs, targets, image_for_crf, indexes) in tqdm(enumerate(self.data_loader_sod),
-                                                                     total=self.data_batch_num):
+            for i, (inputs, targets, image_for_crf, indexes, params) in tqdm(enumerate(self.data_loader_sod),
+                                                                             total=self.data_batch_num):
                 inputs = inputs.type(torch.FloatTensor).cuda()
                 targets = targets.type(torch.FloatTensor).cuda()
 
@@ -422,13 +428,39 @@ class BASRunner(object):
 
                 ##############################################
                 if has_history:
-                    targets = targets.detach().cpu()
-                    sod_output = sod_output.detach().cpu()
+                    histories = np.asarray(targets.detach().cpu())
+                    sod_output = np.asarray(sod_output.detach().cpu())
+
+                    # 处理翻转
+                    history_list, sod_output_list = [], []
+                    for index, (history, sod_one) in enumerate(zip(histories, sod_output)):
+                        if params[0][index] == 1:
+                            history = np.expand_dims(np.fliplr(history[0]), 0)
+                            sod_one = np.expand_dims(np.fliplr(sod_one[0]), 0)
+                        history_list.append(history)
+                        sod_output_list.append(sod_one)
+                        pass
+                    histories, sod_output = np.asarray(history_list), np.asarray(sod_output_list)
+
+                    # 正式开始
                     if epoch == start_epoch + history_start_epoch - 1:
-                        self.save_histories(indexes=indexes, histories=targets)
+                        self.save_histories(indexes=indexes, histories=histories)
                     elif epoch >= start_epoch + history_start_epoch:
-                        sod_crf = CRFTool.crf_torch(image_for_crf * 255, sod_output, t=5)
-                        histories = 0.5 * targets + 0.5 * sod_crf
+                        if which_history == 0:  # 1: 55
+                            sod_crf = CRFTool.crf_torch(image_for_crf * 255, sod_output, t=5)
+                            histories = 0.5 * histories + 0.5 * sod_crf
+                        elif which_history == 1:  # 2: 91
+                            sod_crf = CRFTool.crf_torch(image_for_crf * 255, sod_output, t=5)
+                            histories = 0.9 * histories + 0.1 * sod_crf
+                        elif which_history == 2:  # 3: 55
+                            histories = 0.5 * histories + 0.5 * sod_output
+                            histories = CRFTool.crf_torch(image_for_crf * 255, histories, t=5)
+                        elif which_history == 3:  # 4: 91
+                            histories = 0.9 * histories + 0.1 * sod_output
+                            histories = CRFTool.crf_torch(image_for_crf * 255, histories, t=5)
+                        else:
+                            raise Exception("{}...................".format(which_history))
+
                         self.save_histories(indexes=indexes, histories=histories)
                     pass
                 ##############################################
@@ -574,8 +606,10 @@ CAM_123_224_256_AVG_30 CAM_123_SOD_224_256_cam_up_norm_C123_crf
 
 
 if __name__ == '__main__':
-    os.environ["CUDA_VISIBLE_DEVICES"] = "3"
-    _batch_size = 12 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
+    _which_history = 3
+
+    os.environ["CUDA_VISIBLE_DEVICES"] = "{}".format(_which_history)
+    _batch_size = 16 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
 
     _size_train = 224
     _size_test = 256
@@ -589,13 +623,15 @@ if __name__ == '__main__':
     # _cam_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_30"
     _cam_label_name = 'cam_up_norm_C123_crf'
 
-    _his_label_dir = "../BASNetTemp/his/CAM_123_224_256_AVG_1"
-
     Tools.print()
-    _name_model = "CAM_123_SOD_{}_{}{}{}{}{}".format(
+    _name_model = "CAM_123_SOD_{}_{}{}{}{}{}_{}".format(
         _size_train, _size_test, "_{}".format(_cam_label_name), "_Filter" if _is_filter else "",
-        "_Supervised" if _is_supervised else "", "_History" if _has_history else "")
+        "_Supervised" if _is_supervised else "", "_History" if _has_history else "", _which_history)
+    _his_label_dir = "../BASNetTemp/his/{}".format(_name_model)
     Tools.print(_name_model)
+    Tools.print(_cam_label_name)
+    Tools.print(_cam_label_dir)
+    Tools.print(_his_label_dir)
     Tools.print()
 
     bas_runner = BASRunner(batch_size=_batch_size, size_train=_size_train, size_test=_size_test,
@@ -603,5 +639,6 @@ if __name__ == '__main__':
                            cam_label_dir=_cam_label_dir, cam_label_name=_cam_label_name, his_label_dir=_his_label_dir,
                            model_dir="../BASNetTemp/saved_models/{}".format(_name_model))
     bas_runner.load_model(model_file_name="../BASNetTemp/saved_models/CAM_123_224_256/930_train_1.172.pth")
-    bas_runner.train(epoch_num=50, start_epoch=0, is_supervised=_is_supervised, has_history=_has_history)
+    bas_runner.train(epoch_num=100, start_epoch=0, which_history=_which_history,
+                     is_supervised=_is_supervised, has_history=_has_history)
     pass
