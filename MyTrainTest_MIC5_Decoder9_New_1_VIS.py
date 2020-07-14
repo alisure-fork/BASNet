@@ -220,6 +220,52 @@ class DatasetUSODVIS(Dataset):
     pass
 
 
+class EvalCAM(object):
+
+    def __init__(self, lab_name_list, lab2_name_list, size_eval=None, th_num=100):
+        self.label_name_list = lab_name_list
+        self.label2_name_list = lab2_name_list
+        self.size_eval = size_eval
+        self.th_num = th_num
+        pass
+
+    def __len__(self):
+        return len(self.label_name_list)
+
+    def __getitem__(self, idx):
+        label = Image.open(self.label_name_list[idx]).convert("L")
+        label2 = Image.open(self.label2_name_list[idx]).convert("L")
+
+        if self.size_eval is not None:
+            label = label.resize((self.size_eval, self.size_eval))
+            label2 = label2.resize((self.size_eval, self.size_eval))
+            pass
+
+        label = np.asarray(label) / 255
+        label2 = np.asarray(label2) / 255
+
+        mae = self.eval_mae(label, label2)
+        prec, recall = self.eval_pr(label, label2, th_num=self.th_num)
+        return mae, prec, recall
+
+    @staticmethod
+    def eval_mae(y_pred, y):
+        return np.abs(y_pred - y).mean()
+
+    @staticmethod
+    def eval_pr(y_pred, y, th_num):
+        prec, recall = np.zeros(shape=(th_num,)), np.zeros(shape=(th_num,))
+        th_list = np.linspace(0, 1 - 1e-10, th_num)
+        for i in range(th_num):
+            y_temp = y_pred >= th_list[i]
+            tp = (y_temp * y).sum()
+            prec[i], recall[i] = tp / (y_temp.sum() + 1e-20), tp / y.sum()
+            pass
+        return prec, recall
+
+    pass
+
+
 #######################################################################################################################
 # 2 Model
 
@@ -704,6 +750,36 @@ class BASRunner(object):
             pass
         pass
 
+    @staticmethod
+    def eval_vis(tra_label_dir, tra_label_name, size_eval=None, th_num=100, beta_2=0.3):
+        data_dir = '/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR'
+        image_dir, label_dir = 'DUTS-TR-Image', 'DUTS-TR-Mask'
+        img_name_list = glob.glob(os.path.join(data_dir, image_dir, '*.jpg'))
+
+        lbl_name_list = [os.path.join(data_dir, label_dir, '{}.png'.format(
+            os.path.splitext(os.path.basename(img_path))[0])) for img_path in img_name_list]
+        lbl2_name_list = [os.path.join(tra_label_dir, '{}_{}.bmp'.format(os.path.splitext(
+            os.path.basename(img_path))[0], tra_label_name)) for img_path in img_name_list]
+
+        eval_cam = EvalCAM(lbl_name_list, lbl2_name_list, size_eval=size_eval, th_num=th_num)
+
+        avg_mae = 0.0
+        avg_prec = np.zeros(shape=(th_num,)) + 1e-6
+        avg_recall = np.zeros(shape=(th_num,)) + 1e-6
+        for i, (mae, prec, recall) in tqdm(enumerate(eval_cam), total=len(eval_cam)):
+            avg_mae += mae
+            avg_prec += prec
+            avg_recall += recall
+            pass
+
+        avg_mae = avg_mae / len(eval_cam)
+        avg_prec = avg_prec / len(eval_cam)
+        avg_recall = avg_recall / len(eval_cam)
+        score = (1 + beta_2) * avg_prec * avg_recall / (beta_2 * avg_prec + avg_recall)
+        score[score != score] = 0
+        Tools.print("Train avg mae={} score={}".format(avg_mae, score.max()))
+        pass
+
     pass
 
 
@@ -724,35 +800,44 @@ class BASRunner(object):
 3.输出正则归一化
 4.判断那些样本参加训练
 5.如何进行端到端训练
-6.Weight Sum
+6.Weight Sum, 修改成全连接!!!!
 """
 
 if __name__ == '__main__':
     _is_train = False
+    _is_eval = True
 
     os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3" if _is_train else "0"
     _batch_size = 16 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
 
-    _is_weight_sum = True
+    _is_weight_sum = False
     _size_train = 224
     _size_vis = 256
     _multi_num = 10
     _name_model = "CAM_123_{}_{}".format(_size_train, _size_vis)
     _name_cam = "CAM_123_{}_{}_AVG_{}{}".format(_size_train, _size_vis, _multi_num, "_S" if _is_weight_sum else "")
 
-    bas_runner = BASRunner(batch_size=_batch_size, multi_num=_multi_num, is_weight_sum=_is_weight_sum,
-                           size_train=_size_train, size_vis=_size_vis, is_train=_is_train,
-                           clustering_num_1=128 * 4, clustering_num_2=128 * 4, clustering_num_3=128 * 4,
-                           clustering_ratio_1=1, clustering_ratio_2=1.5, clustering_ratio_3=2,
-                           data_dir="/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR",
-                           cam_dir="../BASNetTemp/cam/{}".format(_name_cam),
-                           model_dir="../BASNetTemp/saved_models/{}".format(_name_model))
+    if _is_eval:
+        _tra_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_1"
+        # _tra_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_9"
+        # _tra_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_30"
+        _tra_label_name = 'cam_up_norm_C123_crf'
+        BASRunner.eval_vis(_tra_label_dir, _tra_label_name, size_eval=_size_vis)
+    else:
+        bas_runner = BASRunner(batch_size=_batch_size, multi_num=_multi_num, is_weight_sum=_is_weight_sum,
+                               size_train=_size_train, size_vis=_size_vis, is_train=_is_train,
+                               clustering_num_1=128 * 4, clustering_num_2=128 * 4, clustering_num_3=128 * 4,
+                               clustering_ratio_1=1, clustering_ratio_2=1.5, clustering_ratio_3=2,
+                               data_dir="/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR",
+                               cam_dir="../BASNetTemp/cam/{}".format(_name_cam),
+                               model_dir="../BASNetTemp/saved_models/{}".format(_name_model))
 
-    if _is_train:  # 训练
-        bas_runner.train(epoch_num=1000, start_epoch=0)
-    else:  # 得到响应图
-        bas_runner.load_model(model_file_name="../BASNetTemp/saved_models/CAM_123_224_256/930_train_1.172.pth")
-        bas_runner.vis()
+        if _is_train:  # 训练
+            bas_runner.train(epoch_num=1000, start_epoch=0)
+        else:  # 得到响应图
+            bas_runner.load_model(model_file_name="../BASNetTemp/saved_models/CAM_123_224_256/930_train_1.172.pth")
+            bas_runner.vis()
+            pass
         pass
 
     pass
