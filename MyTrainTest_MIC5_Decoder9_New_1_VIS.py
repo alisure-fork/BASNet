@@ -259,7 +259,7 @@ class EvalCAM(object):
         for i in range(th_num):
             y_temp = y_pred >= th_list[i]
             tp = (y_temp * y).sum()
-            prec[i], recall[i] = tp / (y_temp.sum() + 1e-20), tp / y.sum()
+            prec[i], recall[i] = tp / (y_temp.sum() + 1), tp / (y.sum() + 1)
             pass
         return prec, recall
 
@@ -792,6 +792,13 @@ class BASRunner(object):
 2020-07-11 10:16:24 Train: [930] 2-1077/464
 2020-07-11 10:16:24 Train: [930] 3-973/419
 2020-07-11 10:16:25 Save Model to ../BASNetTemp/saved_models/CAM_123_224/930_train_1.172.pth
+
+2020-07-14 13:34:05 ../BASNetTemp/cam/CAM_123_224_256_AVG_1 cam_up_norm_C123_crf
+2020-07-14 13:40:06 Train avg mae=0.18007975575910706 score=0.6450108439345925
+2020-07-14 13:41:38 ../BASNetTemp/cam/CAM_123_224_256_AVG_9 cam_up_norm_C123_crf
+2020-07-14 13:47:55 Train avg mae=0.17801150496007748 score=0.6452717806037506
+2020-07-14 13:41:42 ../BASNetTemp/cam/CAM_123_224_256_AVG_30 cam_up_norm_C123_crf
+2020-07-14 13:47:43 Train avg mae=0.17759568890576982 score=0.6455211460931307
 """
 
 """
@@ -818,10 +825,12 @@ if __name__ == '__main__':
     _name_cam = "CAM_123_{}_{}_AVG_{}{}".format(_size_train, _size_vis, _multi_num, "_S" if _is_weight_sum else "")
 
     if _is_eval:
-        _tra_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_1"
+        # _tra_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_1"
         # _tra_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_9"
-        # _tra_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_30"
+        _tra_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_30"
         _tra_label_name = 'cam_up_norm_C123_crf'
+
+        Tools.print("{} {}".format(_tra_label_dir, _tra_label_name))
         BASRunner.eval_vis(_tra_label_dir, _tra_label_name, size_eval=_size_vis)
     else:
         bas_runner = BASRunner(batch_size=_batch_size, multi_num=_multi_num, is_weight_sum=_is_weight_sum,
