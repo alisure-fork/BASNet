@@ -6,18 +6,55 @@ import numpy as np
 from tqdm import tqdm
 import torch.nn as nn
 from PIL import Image
-from skimage import io
 import torch.optim as optim
 from torchvision import models
-import torch.nn.functional as F
 import pydensecrf.densecrf as dcrf
 from torchvision import transforms
 from alisuretool.Tools import Tools
 import torch.backends.cudnn as cudnn
-from multiprocessing.pool import Pool
 from pydensecrf.utils import unary_from_softmax
 from torch.utils.data import DataLoader, Dataset
 from torchvision.models.resnet import BasicBlock as ResBlock
+
+
+#######################################################################################################################
+# 0 CRF
+class CRFTool(object):
+
+    @staticmethod
+    def crf(img, annotation, t=5):  # [3, w, h], [1, w, h]
+        img = np.ascontiguousarray(img)
+        annotation = np.concatenate([annotation, 1 - annotation], axis=0)
+
+        h, w = img.shape[:2]
+
+        d = dcrf.DenseCRF2D(w, h, 2)
+        unary = unary_from_softmax(annotation)
+        unary = np.ascontiguousarray(unary)
+        d.setUnaryEnergy(unary)
+        # DIAG_KERNEL     CONST_KERNEL FULL_KERNEL
+        # NORMALIZE_BEFORE NORMALIZE_SYMMETRIC     NO_NORMALIZATION  NORMALIZE_AFTER
+        d.addPairwiseGaussian(sxy=3, compat=3, kernel=dcrf.DIAG_KERNEL, normalization=dcrf.NORMALIZE_SYMMETRIC)
+        d.addPairwiseBilateral(sxy=80, srgb=13, rgbim=np.copy(img), compat=10,
+                               kernel=dcrf.DIAG_KERNEL, normalization=dcrf.NORMALIZE_SYMMETRIC)
+        q = d.inference(t)
+
+        result = np.array(q).reshape((2, h, w))
+        return result[0]
+
+    @classmethod
+    def crf_torch(cls, img, annotation, t=5):
+        img_data = np.asarray(img, dtype=np.uint8)
+        annotation_data = np.asarray(annotation)
+        result = []
+        for img_data_one, annotation_data_one in zip(img_data, annotation_data):
+            img_data_one = np.transpose(img_data_one, axes=(1, 2, 0))
+            result_one = cls.crf(img_data_one, annotation_data_one, t=t)
+            result.append(np.expand_dims(result_one, axis=0))
+            pass
+        return torch.tensor(np.asarray(result))
+
+    pass
 
 
 #######################################################################################################################
@@ -83,32 +120,60 @@ class Compose(transforms.Compose):
 
 class DatasetUSOD(Dataset):
 
-    def __init__(self, img_name_list, lab_name_list, size_train=224, is_filter=False):
+    def __init__(self, img_name_list, lab_name_list,
+                 cam_lbl_name_list, his_lbl_name_list, size_train=224, is_filter=False):
         self.is_filter = is_filter
-        self.image_name_list = img_name_list
-        self.label_name_list = lab_name_list
+        self.img_name_list = img_name_list
+        self.tra_lab_name_list = lab_name_list
+        self.cam_lbl_name_list = cam_lbl_name_list
+        self.his_lbl_name_list = his_lbl_name_list
         self.transform = Compose([FixedResized(size_train, size_train), RandomHorizontalFlip(), ToTensor(),
                                   Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))])
+
+        self.lab_name_list = None
+
+        self.image_size_list = [Image.open(image_name).size for image_name in self.img_name_list]
+        Tools.print("DatasetUSOD: size_train={} is_filter={}".format(size_train, is_filter))
+        pass
+
+    def set_label(self, is_supervised, has_history):
+        self.lab_name_list = self.tra_lab_name_list if is_supervised else self.cam_lbl_name_list
+        self.lab_name_list = self.his_lbl_name_list if has_history else self.lab_name_list
+        Tools.print("DatasetUSOD change label: is_supervised={} has_history={}".format(is_supervised, has_history))
         pass
 
     def __len__(self):
-        return len(self.image_name_list)
+        return len(self.img_name_list)
 
     def __getitem__(self, idx):
-        image = Image.open(self.image_name_list[idx]).convert("RGB")
-        label = Image.open(self.label_name_list[idx]).convert("L")
+        assert self.lab_name_list is not None
+
+        image = Image.open(self.img_name_list[idx]).convert("RGB")
+        if os.path.exists(self.lab_name_list[idx]):
+            label = Image.open(self.lab_name_list[idx]).convert("L")
+        else:
+            label = Image.fromarray(np.zeros_like(np.asarray(image), dtype=np.uint8)).convert("L")
         image, label, image_for_crf = self.transform(image, label, image)
 
         if self.is_filter:
             num = np.sum(np.asarray(label))
             num_all = label.shape[1] * label.shape[2]
             ratio = num / num_all
-            if ratio < 0.01 or ratio > 0.8:
-                Tools.print("{} {:.4f} {}".format(idx, ratio, self.image_name_list[idx]))
-                image, label, image_for_crf = self.__getitem__(np.random.randint(0, self.__len__()))
+            if ratio < 0.01 or ratio > 0.9:
+                Tools.print("{} {:.4f} {}".format(idx, ratio, self.lab_name_list[idx]))
+                image, label, image_for_crf, idx = self.__getitem__(np.random.randint(0, self.__len__()))
             pass
 
-        return image, label, image_for_crf
+        return image, label, image_for_crf, idx
+
+    def save_history(self, history, idx):
+        h_path = self.his_lbl_name_list[idx]
+        h_path = Tools.new_dir(h_path)
+
+        history = np.asarray(np.squeeze(history) * 255, dtype=np.uint8)
+        im = Image.fromarray(history).resize(self.image_size_list[idx])
+        im.save(h_path)
+        pass
 
     pass
 
@@ -247,10 +312,10 @@ class BASNet(nn.Module):
 
 class BASRunner(object):
 
-    def __init__(self, batch_size=8, size_train=224, size_test=256, is_un=True, is_filter=False,
-                 data_dir='/mnt/4T/Data/SOD/DUTS/DUTS-TR', tra_image_dir='DUTS-TR-Image',
-                 tra_label_dir="../BASNetTemp/cam/CAM_123_224_256", tra_label_name='cam_up_norm_C123',
-                 model_dir="./saved_models/my_train_mic_only"):
+    def __init__(self, batch_size=8, size_train=224, size_test=256, is_filter=False,
+                 data_dir='/mnt/4T/Data/SOD/DUTS/DUTS-TR', tra_image_dir='DUTS-TR-Image', tra_label_dir="DUTS-TR-Mask",
+                 cam_label_dir="../BASNetTemp/cam/CAM_123_224_256", cam_label_name='cam_up_norm_C123',
+                 his_label_dir="../BASNetTemp/his/CAM_123_224_256", model_dir="./saved_models/model"):
         self.batch_size = batch_size
         self.size_train = size_train
         self.size_test = size_test
@@ -258,10 +323,12 @@ class BASRunner(object):
         # Dataset
         self.model_dir = model_dir
         self.data_dir = data_dir
-        self.tra_img_name_list, self.tra_lbl_name_list = self.get_tra_img_label_name(
-            tra_image_dir, tra_label_dir, tra_label_name, is_un=is_un)
-        self.dataset_sod = DatasetUSOD(img_name_list=self.tra_img_name_list, is_filter=is_filter,
-                                       lab_name_list=self.tra_lbl_name_list, size_train=self.size_train)
+        self.img_name_list, self.lbl_name_list, self.cam_lbl_name_list, self.his_lbl_name_list = \
+            self.get_tra_img_label_name(tra_image_dir, tra_label_dir, cam_label_dir, cam_label_name, his_label_dir)
+        self.dataset_sod = DatasetUSOD(img_name_list=self.img_name_list, lab_name_list=self.lbl_name_list,
+                                       cam_lbl_name_list=self.cam_lbl_name_list,
+                                       his_lbl_name_list=self.his_lbl_name_list,
+                                       is_filter=is_filter, size_train=self.size_train)
         self.data_loader_sod = DataLoader(self.dataset_sod, self.batch_size, shuffle=True, num_workers=8)
         self.data_batch_num = len(self.data_loader_sod)
 
@@ -273,8 +340,7 @@ class BASRunner(object):
         # Loss and optimizer
         self.bce_loss = nn.BCELoss().cuda()
         self.learning_rate = [[0, 0.001], [30, 0.0001], [40, 0.00001]]
-        self.optimizer = optim.Adam(self.net.parameters(), lr=self.learning_rate[0][1],
-                                    betas=(0.9, 0.999), weight_decay=0)
+        self.optimizer = optim.Adam(self.net.parameters(), lr=self.learning_rate[0][1])
         pass
 
     def _adjust_learning_rate(self, epoch):
@@ -293,37 +359,55 @@ class BASRunner(object):
         Tools.print("restore from {}".format(model_file_name))
         pass
 
-    def get_tra_img_label_name(self, tra_image_dir, tra_label_dir, tra_label_name, is_un=True):
+    def get_tra_img_label_name(self, tra_image_dir, tra_label_dir, cam_label_dir, cam_label_name, his_label_dir):
         tra_img_name_list = glob.glob(os.path.join(self.data_dir, tra_image_dir, '*.jpg'))
-        if is_un:
-            tra_lbl_name_list = [os.path.join(tra_label_dir, '{}_{}.bmp'.format(os.path.splitext(
-                os.path.basename(img_path))[0], tra_label_name)) for img_path in tra_img_name_list]
-        else:
-            tra_lbl_name_list = [os.path.join(self.data_dir, tra_label_dir, '{}.png'.format(
-                os.path.splitext(os.path.basename(img_path))[0])) for img_path in tra_img_name_list]
-            pass
+
+        tra_lbl_name_list = [os.path.join(self.data_dir, tra_label_dir, '{}.png'.format(
+            os.path.splitext(os.path.basename(img_path))[0])) for img_path in tra_img_name_list]
+
+        cam_lbl_name_list = [os.path.join(cam_label_dir, '{}_{}.bmp'.format(os.path.splitext(
+            os.path.basename(img_path))[0], cam_label_name)) for img_path in tra_img_name_list]
+
+        his_lbl_name_list = [os.path.join(his_label_dir, '{}_{}.bmp'.format(os.path.splitext(
+            os.path.basename(img_path))[0], cam_label_name)) for img_path in tra_img_name_list]
+
         Tools.print("train images: {}".format(len(tra_img_name_list)))
         Tools.print("train labels: {}".format(len(tra_lbl_name_list)))
-        return tra_img_name_list, tra_lbl_name_list
+        return tra_img_name_list, tra_lbl_name_list, cam_lbl_name_list, his_lbl_name_list
 
     def all_loss_fusion(self, sod_output, sod_label, ignore_label=255.0):
         positions = sod_label.view(-1, 1) != ignore_label
         loss_bce = self.bce_loss(sod_output.view(-1, 1)[positions], sod_label.view(-1, 1)[positions])
         return loss_bce
 
-    def train(self, epoch_num=200, start_epoch=0, save_epoch_freq=10):
+    def save_histories(self, histories, indexes):
+        for history, index in zip(histories, indexes):
+            self.dataset_sod.save_history(idx=int(index), history=np.asarray(history.squeeze()))
+        pass
+
+    def train(self, epoch_num=200, start_epoch=0, save_epoch_freq=10,
+              is_supervised=False, has_history=False, history_start_epoch=1):
+        self.dataset_sod.set_label(is_supervised=is_supervised, has_history=False)
+
         all_loss = 0
         for epoch in range(start_epoch, epoch_num+1):
+            ###########################################################################
+            # 0 准备
             Tools.print()
             self._adjust_learning_rate(epoch)
             Tools.print('Epoch:{:03d}, lr={:.5f}'.format(epoch, self.optimizer.param_groups[0]['lr']))
+            if epoch == start_epoch + history_start_epoch:
+                self.dataset_sod.set_label(is_supervised=is_supervised, has_history=has_history)
+                pass
+            ###########################################################################
 
             ###########################################################################
             # 1 训练模型
             all_loss = 0.0
             Tools.print()
             self.net.train()
-            for i, (inputs, targets, image_for_crf) in tqdm(enumerate(self.data_loader_sod), total=self.data_batch_num):
+            for i, (inputs, targets, image_for_crf, indexes) in tqdm(enumerate(self.data_loader_sod),
+                                                                     total=self.data_batch_num):
                 inputs = inputs.type(torch.FloatTensor).cuda()
                 targets = targets.type(torch.FloatTensor).cuda()
 
@@ -334,11 +418,23 @@ class BASRunner(object):
                 loss = self.all_loss_fusion(sod_output, targets)
                 loss.backward()
                 self.optimizer.step()
-
                 all_loss += loss.item()
-                pass
 
+                ##############################################
+                if has_history:
+                    targets = targets.detach().cpu()
+                    sod_output = sod_output.detach().cpu()
+                    if epoch == start_epoch + history_start_epoch - 1:
+                        self.save_histories(indexes=indexes, histories=targets)
+                    elif epoch >= start_epoch + history_start_epoch:
+                        sod_crf = CRFTool.crf_torch(image_for_crf * 255, sod_output, t=5)
+                        histories = 0.5 * targets + 0.5 * sod_crf
+                        self.save_histories(indexes=indexes, histories=histories)
+                    pass
+                ##############################################
+                pass
             Tools.print("[E:{:3d}/{:3d}] loss:{:.3f}".format(epoch, epoch_num, all_loss/self.data_batch_num))
+            ###########################################################################
 
             ###########################################################################
             # 2 保存模型
@@ -478,26 +574,34 @@ CAM_123_224_256_AVG_30 CAM_123_SOD_224_256_cam_up_norm_C123_crf
 
 
 if __name__ == '__main__':
-    os.environ["CUDA_VISIBLE_DEVICES"] = "2, 3"
-    _batch_size = 16 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
+    os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+    _batch_size = 12 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
 
     _size_train = 224
     _size_test = 256
-    _is_filter = True
 
-    _tra_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_1"
-    # _tra_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_9"
-    # _tra_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_30"
-    _tra_label_name = 'cam_up_norm_C123_crf'
+    _is_supervised = False
+    _has_history = True
+    _is_filter = False
 
-    _name_model = "CAM_123_SOD_{}_{}_{}{}".format(_size_train, _size_test,
-                                                  _tra_label_name, "_Filter" if _is_filter else "")
+    _cam_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_1"
+    # _cam_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_9"
+    # _cam_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_30"
+    _cam_label_name = 'cam_up_norm_C123_crf'
+
+    _his_label_dir = "../BASNetTemp/his/CAM_123_224_256_AVG_1"
+
+    Tools.print()
+    _name_model = "CAM_123_SOD_{}_{}{}{}{}{}".format(
+        _size_train, _size_test, "_{}".format(_cam_label_name), "_Filter" if _is_filter else "",
+        "_Supervised" if _is_supervised else "", "_History" if _has_history else "")
     Tools.print(_name_model)
+    Tools.print()
 
     bas_runner = BASRunner(batch_size=_batch_size, size_train=_size_train, size_test=_size_test,
-                           data_dir="/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR", is_un=True, is_filter=_is_filter,
-                           tra_label_dir=_tra_label_dir, tra_label_name=_tra_label_name,
+                           data_dir="/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR", is_filter=_is_filter,
+                           cam_label_dir=_cam_label_dir, cam_label_name=_cam_label_name, his_label_dir=_his_label_dir,
                            model_dir="../BASNetTemp/saved_models/{}".format(_name_model))
     bas_runner.load_model(model_file_name="../BASNetTemp/saved_models/CAM_123_224_256/930_train_1.172.pth")
-    bas_runner.train(epoch_num=50, start_epoch=0)
+    bas_runner.train(epoch_num=50, start_epoch=0, is_supervised=_is_supervised, has_history=_has_history)
     pass
