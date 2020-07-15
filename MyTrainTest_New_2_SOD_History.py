@@ -43,7 +43,7 @@ class CRFTool(object):
         return result[0]
 
     @classmethod
-    def crf_torch(cls, img, annotation, t=5):
+    def crf_list(cls, img, annotation, t=5):
         img_data = np.asarray(img, dtype=np.uint8)
         annotation_data = np.asarray(annotation)
         result = []
@@ -52,7 +52,7 @@ class CRFTool(object):
             result_one = cls.crf(img_data_one, annotation_data_one, t=t)
             result.append(np.expand_dims(result_one, axis=0))
             pass
-        return torch.tensor(np.asarray(result))
+        return np.asarray(result)
 
     pass
 
@@ -444,24 +444,26 @@ class BASRunner(object):
 
                     # 正式开始
                     if epoch == start_epoch + history_start_epoch - 1:
-                        self.save_histories(indexes=indexes, histories=histories)
+                        histories = histories
                     elif epoch >= start_epoch + history_start_epoch:
                         if which_history == 0:  # 1: 55
-                            sod_crf = CRFTool.crf_torch(image_for_crf * 255, sod_output, t=5)
+                            sod_crf = CRFTool.crf_list(image_for_crf * 255, sod_output, t=5)
                             histories = 0.5 * histories + 0.5 * sod_crf
                         elif which_history == 1:  # 2: 91
-                            sod_crf = CRFTool.crf_torch(image_for_crf * 255, sod_output, t=5)
+                            sod_crf = CRFTool.crf_list(image_for_crf * 255, sod_output, t=5)
                             histories = 0.9 * histories + 0.1 * sod_crf
                         elif which_history == 2:  # 3: 55
                             histories = 0.5 * histories + 0.5 * sod_output
-                            histories = CRFTool.crf_torch(image_for_crf * 255, histories, t=5)
+                            histories = CRFTool.crf_list(image_for_crf * 255, histories, t=5)
                         elif which_history == 3:  # 4: 91
                             histories = 0.9 * histories + 0.1 * sod_output
-                            histories = CRFTool.crf_torch(image_for_crf * 255, histories, t=5)
+                            histories = CRFTool.crf_list(image_for_crf * 255, histories, t=5)
                         else:
                             raise Exception("{}...................".format(which_history))
-
-                        self.save_histories(indexes=indexes, histories=histories)
+                    else:
+                        histories = sod_output
+                        pass
+                    self.save_histories(indexes=indexes, histories=histories)
                     pass
                 ##############################################
                 pass
@@ -606,9 +608,10 @@ CAM_123_224_256_AVG_30 CAM_123_SOD_224_256_cam_up_norm_C123_crf
 
 
 if __name__ == '__main__':
-    _which_history = 3
+    _which_history = 1
 
-    os.environ["CUDA_VISIBLE_DEVICES"] = "{}".format(_which_history)
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "{}".format(_which_history)
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
     _batch_size = 16 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
 
     _size_train = 224
@@ -617,6 +620,7 @@ if __name__ == '__main__':
     _is_supervised = False
     _has_history = True
     _is_filter = False
+    _history_start_epoch = 11
 
     _cam_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_1"
     # _cam_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_9"
@@ -640,5 +644,6 @@ if __name__ == '__main__':
                            model_dir="../BASNetTemp/saved_models/{}".format(_name_model))
     bas_runner.load_model(model_file_name="../BASNetTemp/saved_models/CAM_123_224_256/930_train_1.172.pth")
     bas_runner.train(epoch_num=100, start_epoch=0, which_history=_which_history,
+                     history_start_epoch=_history_start_epoch,
                      is_supervised=_is_supervised, has_history=_has_history)
     pass
