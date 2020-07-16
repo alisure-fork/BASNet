@@ -8,6 +8,7 @@ import torch.nn as nn
 from PIL import Image
 import torch.optim as optim
 from torchvision import models
+import multiprocessing as multi_p
 import pydensecrf.densecrf as dcrf
 from torchvision import transforms
 from alisuretool.Tools import Tools
@@ -202,19 +203,42 @@ class DatasetUSOD(Dataset):
         im.save(h_path)
         pass
 
+    @staticmethod
+    def _crf_one_pool(pool_id, img_name_list, his_save_lbl_name_list, his_train_lbl_name_list):
+        # Tools.print("{} {} start".format(pool_id, len(img_name_list)))
+        for i, (img_name, save_lbl_name, train_lbl_name) in enumerate(zip(
+                img_name_list, his_save_lbl_name_list, his_train_lbl_name_list)):
+            try:
+                img = np.asarray(Image.open(img_name).convert("RGB"))
+                ann = np.asarray(Image.open(save_lbl_name).convert("L"))
+                ann = ann / 255
+                output = CRFTool.crf(img, np.expand_dims(ann, axis=0), normalization=dcrf.NO_NORMALIZATION)
+                ann[output > 0.5] = 1.0
+                imsave(Tools.new_dir(train_lbl_name), np.asarray(ann * 255, dtype=np.uint8), check_contrast=False)
+            except Exception:
+                Tools.print("{} {}".format(img_name, save_lbl_name))
+            pass
+        # Tools.print("{} {} end".format(pool_id, len(img_name_list)))
+        pass
+
     def crf_dir(self):
         Tools.print("DatasetUSOD crf_dir form {}".format(self.his_save_lbl_name_list[0]))
         Tools.print("DatasetUSOD crf_dir   to {}".format(self.his_train_lbl_name_list[0]))
-        for i, (img_name, save_lbl_name, train_lbl_name) in tqdm(enumerate(zip(
-                self.img_name_list, self.his_save_lbl_name_list,
-                self.his_train_lbl_name_list)), total=len(self.img_name_list)):
-            img = imread(img_name)
-            ann = imread(save_lbl_name)
-            ann = ann / 255
-            output = CRFTool.crf(img, np.expand_dims(ann, axis=0), normalization=dcrf.NO_NORMALIZATION)
-            ann[output > 0.5] = 1.0
-            imsave(Tools.new_dir(train_lbl_name), np.asarray(ann * 255, dtype=np.uint8), check_contrast=False)
+
+        pool_num = multi_p.cpu_count()
+        pool = multi_p.Pool(processes=pool_num)
+        one_num = len(self.img_name_list) // pool_num + 1
+        for i in range(pool_num):
+            img_name_list = self.img_name_list[one_num*i: one_num*(i+1)]
+            his_save_lbl_name_list = self.his_save_lbl_name_list[one_num*i: one_num*(i+1)]
+            his_train_lbl_name_list = self.his_train_lbl_name_list[one_num*i: one_num*(i+1)]
+            pool.apply_async(self._crf_one_pool, args=(i, img_name_list,
+                                                       his_save_lbl_name_list, his_train_lbl_name_list))
             pass
+        pool.close()
+        pool.join()
+
+        Tools.print("DatasetUSOD crf_dir OVER")
         pass
 
     pass
@@ -433,6 +457,7 @@ class BASRunner(object):
 
     def train(self, epoch_num=200, start_epoch=0, save_epoch_freq=10, is_filter=False,
               is_supervised=False, has_history=False, history_epoch_start=10, history_epoch_freq=10):
+
         all_loss = 0
         for epoch in range(start_epoch, epoch_num+1):
             Tools.print()
