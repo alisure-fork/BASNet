@@ -145,6 +145,8 @@ class DatasetUSOD(Dataset):
 
     def set_filter(self, is_filter=False):
         Tools.print("DatasetUSOD is_filter={}".format(is_filter))
+        Tools.print("train: {}".format(self.lbl_name_list_for_train[0]))
+        Tools.print("save:  {}".format(self.lbl_name_list_for_save[0]))
         self.is_filter = is_filter
         pass
 
@@ -169,8 +171,6 @@ class DatasetUSOD(Dataset):
                 self.lbl_name_list_for_save = self.his_2_lbl_name_list
                 pass
             pass
-        Tools.print("train: {}".format(self.lbl_name_list_for_train[0]))
-        Tools.print("save:  {}".format(self.lbl_name_list_for_save[0]))
         pass
 
     def __len__(self):
@@ -437,24 +437,24 @@ class BASRunner(object):
             self._adjust_learning_rate(epoch)
             Tools.print('Epoch:{:03d}, lr={:.5f}'.format(epoch, self.optimizer.param_groups[0]['lr']))
 
+            is_test = False
             ###########################################################################
             # 0 准备
-            Tools.print()
-            if epoch < start_epoch + history_epoch_start - 1:  # filter, cam
-                self.dataset_sod.set_filter(is_filter=is_filter)
+            if epoch < history_epoch_start:  # filter, cam
                 self.dataset_sod.set_label(is_supervised=is_supervised, cam_for_train=True)
-            elif epoch == start_epoch + history_epoch_start - 1:  # cam
-                self.dataset_sod.set_filter(is_filter=False)
-            elif epoch < start_epoch + history_epoch_start + history_epoch_freq - 1:  # filter, his
                 self.dataset_sod.set_filter(is_filter=is_filter)
+            elif epoch == history_epoch_start:  # cam
+                is_test = True
+                self.dataset_sod.set_filter(is_filter=False)
+            elif epoch < history_epoch_start + history_epoch_freq:  # filter, his
                 self.dataset_sod.set_label(is_supervised=is_supervised, cam_for_train=False)
-            elif epoch == start_epoch + history_epoch_start + history_epoch_freq - 1:  # his
-                self.dataset_sod.set_filter(is_filter=False)
-            elif (epoch + 1 - start_epoch - history_epoch_start) % history_epoch_freq == 0:  #
-                self.dataset_sod.set_filter(is_filter=False)
-            elif (epoch - start_epoch - history_epoch_start) % history_epoch_freq == 0:  # filter, change
                 self.dataset_sod.set_filter(is_filter=is_filter)
+            elif (epoch - history_epoch_start) % history_epoch_freq == 0:  #
+                is_test = True
+                self.dataset_sod.set_filter(is_filter=False)
+            elif (epoch - history_epoch_start) % history_epoch_freq == 1:  # filter, change
                 self.dataset_sod.set_change()
+                self.dataset_sod.set_filter(is_filter=is_filter)
             else:  # filter
                 self.dataset_sod.set_filter(is_filter=is_filter)
             Tools.print()
@@ -505,7 +505,8 @@ class BASRunner(object):
 
             ###########################################################################
             # 2 保存模型
-            if (epoch + 1) % save_epoch_freq == 0:
+            # if (epoch + 1) % save_epoch_freq == 0:
+            if is_test:
                 save_file_name = Tools.new_dir(os.path.join(
                     self.model_dir, "{}_train_{:.3f}.pth".format(epoch, all_loss/self.data_batch_num)))
                 torch.save(self.net.state_dict(), save_file_name)
@@ -516,7 +517,7 @@ class BASRunner(object):
 
                 ###########################################################################
                 # 3 评估模型
-                # self.eval(self.net, epoch=epoch, is_test=True, batch_size=self.batch_size, size_test=self.size_test)
+                self.eval(self.net, epoch=epoch, is_test=True, batch_size=self.batch_size, size_test=self.size_test)
                 self.eval(self.net, epoch=epoch, is_test=False, batch_size=self.batch_size, size_test=self.size_test)
                 ###########################################################################
                 pass
@@ -524,7 +525,7 @@ class BASRunner(object):
 
             ###########################################################################
             # 3 评估模型
-            self.eval(self.net, epoch=epoch, is_test=True, batch_size=self.batch_size, size_test=self.size_test)
+            # self.eval(self.net, epoch=epoch, is_test=True, batch_size=self.batch_size, size_test=self.size_test)
             ###########################################################################
             pass
 
@@ -634,9 +635,11 @@ CAM_123_224_256_AVG_30 CAM_123_SOD_224_256_cam_up_norm_C123_crf
 
 
 """
-2020-07-15 23:49:47 Train 29 avg mae=0.1214922642617517 score=0.7984054588810571
-2020-07-16 00:06:18  Test 32 avg mae=0.1353152062319502 score=0.5401841214830287
 2020-07-16 00:20:13  Test 35 avg mae=0.1431293364944337 score=0.5457596654746300
+2020-07-15 23:49:47 Train 29 avg mae=0.1214922642617517 score=0.7984054588810571
+
+2020-07-16 13:53:24  Test 70 avg mae=0.13128699682935885 score=0.5547611136913564
+2020-07-16 13:58:57 Train 70 avg mae=0.12389226668711864 score=0.8058967276174194
 """
 
 
@@ -658,8 +661,8 @@ if __name__ == '__main__':
     _is_supervised = False
     _has_history = True
     _is_filter = True
-    _history_epoch_start = 5
-    _history_epoch_freq = 1
+    _history_epoch_start = 10
+    _history_epoch_freq = 5
     _save_epoch_freq = 5
 
     _cam_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_1"
