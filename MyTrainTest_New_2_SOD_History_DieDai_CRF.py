@@ -247,11 +247,14 @@ class DatasetUSOD(Dataset):
 
 class DatasetEvalUSOD(Dataset):
 
-    def __init__(self, img_name_list, lab_name_list, size_test=256):
+    def __init__(self, img_name_list, lab_name_list, save_lbl_name_list, size_test=256):
         self.image_name_list = img_name_list
         self.label_name_list = lab_name_list
         self.transform = Compose([FixedResized(size_test, size_test), ToTensor(),
                                   Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))])
+
+        self.save_lbl_name_list = save_lbl_name_list
+        self.image_size_list = [Image.open(image_name).size for image_name in self.image_name_list]
         pass
 
     def __len__(self):
@@ -261,7 +264,16 @@ class DatasetEvalUSOD(Dataset):
         image = Image.open(self.image_name_list[idx]).convert("RGB")
         label = Image.open(self.label_name_list[idx]).convert("L")
         image, label, image_for_crf, _ = self.transform(image, label, image, None)
-        return image, label, image_for_crf
+        return image, label, image_for_crf, idx
+
+    def save_history(self, history, idx):
+        h_path = self.save_lbl_name_list[idx]
+        h_path = Tools.new_dir(h_path)
+
+        history = np.asarray(np.squeeze(history) * 255, dtype=np.uint8)
+        im = Image.fromarray(history).resize(self.image_size_list[idx])
+        im.save(h_path)
+        pass
 
     @staticmethod
     def eval_mae(y_pred, y):
@@ -559,7 +571,7 @@ class BASRunner(object):
         pass
 
     @staticmethod
-    def eval(net, epoch=0, is_test=True, size_test=256, batch_size=16, th_num=100, beta_2=0.3):
+    def eval(net, epoch=0, is_test=True, size_test=256, batch_size=16, th_num=100, beta_2=0.3, save_path=None):
         which = "TE" if is_test else "TR"
         data_dir = '/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-{}'.format(which)
         image_dir, label_dir = 'DUTS-{}-Image'.format(which), 'DUTS-{}-Mask'.format(which)
@@ -568,7 +580,9 @@ class BASRunner(object):
         img_name_list = glob.glob(os.path.join(data_dir, image_dir, '*.jpg'))
         lbl_name_list = [os.path.join(data_dir, label_dir, '{}.png'.format(
             os.path.splitext(os.path.basename(img_path))[0])) for img_path in img_name_list]
-        dataset_eval_sod = DatasetEvalUSOD(img_name_list=img_name_list,
+        save_lbl_name_list = [os.path.join(save_path, '{}.bmp'.format(
+            os.path.splitext(os.path.basename(img_path))[0])) for img_path in img_name_list] if save_path else None
+        dataset_eval_sod = DatasetEvalUSOD(img_name_list=img_name_list, save_lbl_name_list=save_lbl_name_list,
                                            lab_name_list=lbl_name_list, size_test=size_test)
         data_loader_eval_sod = DataLoader(dataset_eval_sod, batch_size, shuffle=False, num_workers=24)
 
@@ -578,7 +592,8 @@ class BASRunner(object):
         avg_recall = np.zeros(shape=(th_num,)) + 1e-6
         net.eval()
         with torch.no_grad():
-            for i, (inputs, labels, _) in tqdm(enumerate(data_loader_eval_sod), total=len(data_loader_eval_sod)):
+            for i, (inputs, labels, _, indexes) in tqdm(enumerate(data_loader_eval_sod),
+                                                        total=len(data_loader_eval_sod)):
                 inputs = inputs.type(torch.FloatTensor)
                 inputs = inputs.cuda() if torch.cuda.is_available() else inputs
 
@@ -586,6 +601,12 @@ class BASRunner(object):
                 return_m = net(inputs)
 
                 now_pred = return_m["out_up_sigmoid"].squeeze().cpu().data.numpy()
+
+                if save_path:
+                    for history, index in zip(now_pred, indexes):
+                        dataset_eval_sod.save_history(idx=int(index), history=np.asarray(history.squeeze()))
+                        pass
+                    pass
 
                 mae = dataset_eval_sod.eval_mae(now_pred, now_label)
                 prec, recall = dataset_eval_sod.eval_pr(now_pred, now_label, th_num)
@@ -654,25 +675,22 @@ CAM_123_224_256_AVG_30 CAM_123_SOD_224_256_cam_up_norm_C123_crf
 
 
 """
-2020-07-16 00:20:13  Test 35 avg mae=0.14312933649443370 score=0.5457596654746300
-2020-07-15 23:49:47 Train 29 avg mae=0.12149226426175170 score=0.7984054588810571
-
-2020-07-16 13:53:24  Test 70 avg mae=0.13128699682935885 score=0.5547611136913564
-2020-07-16 13:58:57 Train 70 avg mae=0.12389226668711864 score=0.8058967276174194
-
-2020-07-17 02:23:38  Test 26 avg mae=0.11978739896152593 score=0.5811532756173028
-2020-07-17 02:28:40 Train 26 avg mae=0.13780721394401607 score=0.8236942112859627
-
-2020-07-17 12:10:17  Test 29 avg mae=0.12582365404578705 score=0.5346242621287800
-2020-07-17 12:15:50 Train 29 avg mae=0.15084496343677695 score=0.8012993892346854
-
 ../BASNetTemp/saved_models/CAM_123_SOD_224_256_cam_up_norm_C123_crf_Filter_History_DieDai_CRF/30_train_0.011.pth
-2020-07-17 15:24:13 Test 29 avg mae=0.13881954726330034 score=0.5359092284712121
-2020-07-17 15:30:10 Train 29 avg mae=0.12736118257497298 score=0.796175296932043
+2020-07-17 15:24:13  Test 29 avg mae=0.13881954726330034 score=0.5359092284712121
+2020-07-17 15:30:10 Train 29 avg mae=0.12736118257497298 score=0.7961752969320430
+2020-07-17 23:05:02  Test  0 avg mae=0.14013933748761310 score=0.5356773349322078
+
 
 ../BASNetTemp/saved_models/CAM_123_SOD_224_256_cam_up_norm_C123_crf_History_DieDai_CRF/30_train_0.010.pth
 2020-07-17 15:24:29  Test 29 avg mae=0.14622405152411977 score=0.5431987285811558
 2020-07-17 15:30:53 Train 29 avg mae=0.11897108441952503 score=0.8048967167590105
+2020-07-17 23:00:01  Test  0 avg mae=0.14102674718899064 score=0.5564712463838543
+
+
+../BASNetTemp/saved_models/CAM_123_SOD_320_320_cam_up_norm_C123_crf_History_DieDai_CRF/30_train_0.009.pth
+2020-07-17 20:42:04  Test 29 avg mae=0.12673813816468427 score=0.5533320124713951
+2020-07-17 20:51:51 Train 29 avg mae=0.14355711485400344 score=0.7856480570591794
+2020-07-17 22:46:44  Test  0 avg mae=0.12388358673282490 score=0.5612494814195114
 """
 
 
@@ -685,11 +703,15 @@ CAM_123_224_256_AVG_30 CAM_123_SOD_224_256_cam_up_norm_C123_crf
 
 
 if __name__ == '__main__':
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1"
-    _batch_size = 16 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
 
     _size_train = 224
     _size_test = 256
+    _batch_size = 16 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
+
+    # _size_train = 320
+    # _size_test = 320
+    # _batch_size = 8 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
 
     _is_supervised = False
     _has_history = True
@@ -698,13 +720,13 @@ if __name__ == '__main__':
     _history_epoch_freq = 3
     _save_epoch_freq = 3
 
-    _cam_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_1"
+    # _cam_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_1"
     # _cam_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_9"
-    # _cam_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_30"
+    _cam_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_30"
     _cam_label_name = 'cam_up_norm_C123_crf'
 
     Tools.print()
-    _name_model = "CAM_123_SOD_{}_{}{}{}{}{}_DieDai_CRF".format(
+    _name_model = "CAM_123_AVG_30_SOD_{}_{}{}{}{}{}_DieDai_CRF".format(
         _size_train, _size_test, "_{}".format(_cam_label_name), "_Filter" if _is_filter else "",
         "_Supervised" if _is_supervised else "", "_History" if _has_history else "")
     _his_label_dir = "../BASNetTemp/his/{}".format(_name_model)
@@ -718,8 +740,14 @@ if __name__ == '__main__':
                            cam_label_dir=_cam_label_dir, cam_label_name=_cam_label_name, his_label_dir=_his_label_dir,
                            data_dir="/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR",
                            model_dir="../BASNetTemp/saved_models/{}".format(_name_model))
+
     bas_runner.load_model(model_file_name="../BASNetTemp/saved_models/CAM_123_224_256/930_train_1.172.pth")
     bas_runner.train(epoch_num=30, start_epoch=0, history_epoch_start=_history_epoch_start,
                      history_epoch_freq=_history_epoch_freq, is_supervised=_is_supervised,
                      has_history=_has_history, is_filter=_is_filter)
+
+    # _model_name = "CAM_123_SOD_224_256_cam_up_norm_C123_crf_Filter_History_DieDai_CRF"
+    # bas_runner.load_model(model_file_name="../BASNetTemp/saved_models/{}/30_train_0.011.pth".format(_model_name))
+    # bas_runner.eval(bas_runner.net, epoch=0, is_test=True, batch_size=_batch_size, size_test=_size_test,
+    #                 save_path="/media/ubuntu/4T/ALISURE/USOD/BASNetTemp/his/{}/test".format(_model_name))
     pass
