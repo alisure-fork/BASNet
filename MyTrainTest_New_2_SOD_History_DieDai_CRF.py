@@ -147,8 +147,6 @@ class DatasetUSOD(Dataset):
 
     def set_filter(self, is_filter=False):
         Tools.print("DatasetUSOD is_filter={}".format(is_filter))
-        Tools.print("train: {}".format(self.lbl_name_list_for_train[0]))
-        Tools.print("save:  {}".format(self.lbl_name_list_for_save[0]))
         self.is_filter = is_filter
         pass
 
@@ -184,13 +182,9 @@ class DatasetUSOD(Dataset):
             pass
 
         # 处理 label
-        # 1
-        # label = (label > 0.5) * 1
-
-        # 2
-        label[label > 0.95] = 1
-        label[label < 0.05] = 0
-        label[(0.05 < label) & (label < 0.95)] = 255
+        label[label > 0.9] = 1
+        label[label < 0.1] = 0
+        label[(0.1 < label) & (label < 0.9)] = 255
 
         return image, label, image_for_crf, idx, param
 
@@ -204,7 +198,7 @@ class DatasetUSOD(Dataset):
         pass
 
     @staticmethod
-    def _crf_one_pool(pool_id, img_name_list, his_save_lbl_name_list, his_train_lbl_name_list):
+    def _crf_one_pool(pool_id, epoch, img_name_list, his_save_lbl_name_list, his_train_lbl_name_list):
         # Tools.print("{} {} start".format(pool_id, len(img_name_list)))
         for i, (img_name, save_lbl_name, train_lbl_name) in enumerate(zip(
                 img_name_list, his_save_lbl_name_list, his_train_lbl_name_list)):
@@ -212,8 +206,15 @@ class DatasetUSOD(Dataset):
                 img = np.asarray(Image.open(img_name).convert("RGB"))
                 ann = np.asarray(Image.open(save_lbl_name).convert("L"))
                 ann = ann / 255
-                output = CRFTool.crf(img, np.expand_dims(ann, axis=0), normalization=dcrf.NO_NORMALIZATION)
-                ann[output > 0.5] = 1.0
+                if epoch < 10:
+                    ann = ann
+                elif epoch < 20:
+                    output = CRFTool.crf(img, np.expand_dims(ann, axis=0), normalization=dcrf.NO_NORMALIZATION)
+                    ann[output > 0.5] = 1.0
+                else:
+                    output = CRFTool.crf(img, np.expand_dims(ann, axis=0), normalization=dcrf.NORMALIZE_SYMMETRIC)
+                    ann = 0.5 * ann + 0.5 * output
+                    pass
                 imsave(Tools.new_dir(train_lbl_name), np.asarray(ann * 255, dtype=np.uint8), check_contrast=False)
             except Exception:
                 Tools.print("{} {}".format(img_name, save_lbl_name))
@@ -221,7 +222,7 @@ class DatasetUSOD(Dataset):
         # Tools.print("{} {} end".format(pool_id, len(img_name_list)))
         pass
 
-    def crf_dir(self):
+    def crf_dir(self, epoch=0):
         Tools.print("DatasetUSOD crf_dir form {}".format(self.his_save_lbl_name_list[0]))
         Tools.print("DatasetUSOD crf_dir   to {}".format(self.his_train_lbl_name_list[0]))
 
@@ -232,7 +233,7 @@ class DatasetUSOD(Dataset):
             img_name_list = self.img_name_list[one_num*i: one_num*(i+1)]
             his_save_lbl_name_list = self.his_save_lbl_name_list[one_num*i: one_num*(i+1)]
             his_train_lbl_name_list = self.his_train_lbl_name_list[one_num*i: one_num*(i+1)]
-            pool.apply_async(self._crf_one_pool, args=(i, img_name_list,
+            pool.apply_async(self._crf_one_pool, args=(i, epoch, img_name_list,
                                                        his_save_lbl_name_list, his_train_lbl_name_list))
             pass
         pool.close()
@@ -455,7 +456,7 @@ class BASRunner(object):
             self.dataset_sod.save_history(idx=int(index), history=np.asarray(history.squeeze()))
         pass
 
-    def train(self, epoch_num=200, start_epoch=0, save_epoch_freq=10, is_filter=False,
+    def train(self, epoch_num=200, start_epoch=0, is_filter=False,
               is_supervised=False, has_history=False, history_epoch_start=10, history_epoch_freq=10):
 
         all_loss = 0
@@ -467,33 +468,21 @@ class BASRunner(object):
             is_test = False
             ###########################################################################
             # 0 准备
-            if epoch < history_epoch_start:  # filter, cam
+            self.dataset_sod.set_filter(is_filter=is_filter)
+            if epoch == 0:  # 0
                 self.dataset_sod.set_label(is_supervised=is_supervised, cam_for_train=True)
-                self.dataset_sod.set_filter(is_filter=is_filter)
-            elif epoch == history_epoch_start:  # cam
-                is_test = True
-                self.dataset_sod.set_filter(is_filter=False)
-            elif epoch < history_epoch_start + history_epoch_freq:  # filter, his
-                # Change
-                self.dataset_sod.crf_dir()
+            elif epoch == history_epoch_start:  # 5
                 self.dataset_sod.set_label(is_supervised=is_supervised, cam_for_train=False)
-                self.dataset_sod.set_filter(is_filter=is_filter)
-            elif (epoch - history_epoch_start) % history_epoch_freq == 0:  #
-                is_test = True
+            if epoch > 0 and (epoch-history_epoch_start+1) % history_epoch_freq == 0:  # 4, 9, 14
                 self.dataset_sod.set_filter(is_filter=False)
-            elif (epoch - history_epoch_start) % history_epoch_freq == 1:  # filter, change
-                # Change
+                is_test = True
+            if epoch > 0 and (epoch - history_epoch_start) % history_epoch_freq == 0:  # 5, 10, 15
                 self.dataset_sod.crf_dir()
-                self.dataset_sod.set_filter(is_filter=is_filter)
-            else:  # filter
-                self.dataset_sod.set_filter(is_filter=is_filter)
-            Tools.print()
             ###########################################################################
 
             ###########################################################################
             # 1 训练模型
             all_loss = 0.0
-            Tools.print()
             self.net.train()
             for i, (inputs, targets, image_for_crf, indexes, params) in tqdm(enumerate(self.data_loader_sod),
                                                                              total=self.data_batch_num):
@@ -665,11 +654,25 @@ CAM_123_224_256_AVG_30 CAM_123_SOD_224_256_cam_up_norm_C123_crf
 
 
 """
-2020-07-16 00:20:13  Test 35 avg mae=0.1431293364944337 score=0.5457596654746300
-2020-07-15 23:49:47 Train 29 avg mae=0.1214922642617517 score=0.7984054588810571
+2020-07-16 00:20:13  Test 35 avg mae=0.14312933649443370 score=0.5457596654746300
+2020-07-15 23:49:47 Train 29 avg mae=0.12149226426175170 score=0.7984054588810571
 
 2020-07-16 13:53:24  Test 70 avg mae=0.13128699682935885 score=0.5547611136913564
 2020-07-16 13:58:57 Train 70 avg mae=0.12389226668711864 score=0.8058967276174194
+
+2020-07-17 02:23:38  Test 26 avg mae=0.11978739896152593 score=0.5811532756173028
+2020-07-17 02:28:40 Train 26 avg mae=0.13780721394401607 score=0.8236942112859627
+
+2020-07-17 12:10:17  Test 29 avg mae=0.12582365404578705 score=0.5346242621287800
+2020-07-17 12:15:50 Train 29 avg mae=0.15084496343677695 score=0.8012993892346854
+
+../BASNetTemp/saved_models/CAM_123_SOD_224_256_cam_up_norm_C123_crf_Filter_History_DieDai_CRF/30_train_0.011.pth
+2020-07-17 15:24:13 Test 29 avg mae=0.13881954726330034 score=0.5359092284712121
+2020-07-17 15:30:10 Train 29 avg mae=0.12736118257497298 score=0.796175296932043
+
+../BASNetTemp/saved_models/CAM_123_SOD_224_256_cam_up_norm_C123_crf_History_DieDai_CRF/30_train_0.010.pth
+2020-07-17 15:24:29  Test 29 avg mae=0.14622405152411977 score=0.5431987285811558
+2020-07-17 15:30:53 Train 29 avg mae=0.11897108441952503 score=0.8048967167590105
 """
 
 
@@ -682,7 +685,7 @@ CAM_123_224_256_AVG_30 CAM_123_SOD_224_256_cam_up_norm_C123_crf
 
 
 if __name__ == '__main__':
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1"
     _batch_size = 16 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
 
     _size_train = 224
@@ -690,10 +693,10 @@ if __name__ == '__main__':
 
     _is_supervised = False
     _has_history = True
-    _is_filter = True
-    _history_epoch_start = 10
-    _history_epoch_freq = 5
-    _save_epoch_freq = 5
+    _is_filter = False  # Param
+    _history_epoch_start = 3
+    _history_epoch_freq = 3
+    _save_epoch_freq = 3
 
     _cam_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_1"
     # _cam_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_9"
@@ -716,7 +719,7 @@ if __name__ == '__main__':
                            data_dir="/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR",
                            model_dir="../BASNetTemp/saved_models/{}".format(_name_model))
     bas_runner.load_model(model_file_name="../BASNetTemp/saved_models/CAM_123_224_256/930_train_1.172.pth")
-    bas_runner.train(epoch_num=100, start_epoch=0, history_epoch_start=_history_epoch_start,
-                     save_epoch_freq=_save_epoch_freq, history_epoch_freq=_history_epoch_freq,
-                     is_supervised=_is_supervised, has_history=_has_history, is_filter=_is_filter)
+    bas_runner.train(epoch_num=30, start_epoch=0, history_epoch_start=_history_epoch_start,
+                     history_epoch_freq=_history_epoch_freq, is_supervised=_is_supervised,
+                     has_history=_has_history, is_filter=_is_filter)
     pass
