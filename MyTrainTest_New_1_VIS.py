@@ -13,9 +13,9 @@ import pydensecrf.densecrf as dcrf
 from torchvision import transforms
 from alisuretool.Tools import Tools
 import torch.backends.cudnn as cudnn
-from pydensecrf.utils import unary_from_softmax
 from torch.utils.data import DataLoader, Dataset
 from torchvision.models.resnet import BasicBlock as ResBlock
+from pydensecrf.utils import unary_from_softmax, unary_from_labels
 
 
 #######################################################################################################################
@@ -43,6 +43,33 @@ class CRFTool(object):
         result = np.array(q).reshape((2, h, w))
         return result[0]
 
+    @staticmethod
+    def crf_label(image, annotation, t=5, n_label=2):
+        image = np.ascontiguousarray(image)
+        h, w = image.shape[:2]
+        annotation = np.squeeze(np.array(annotation))
+
+        a, b = (0.8, 0.1)
+        if np.max(annotation) > 1:
+            a, b = a * 255, b * 255
+            pass
+        label_extend = np.zeros_like(annotation)
+        label_extend[annotation > a] = 2
+        label_extend[annotation < b] = 1
+
+        _, label = np.unique(label_extend, return_inverse=True)
+
+        d = dcrf.DenseCRF2D(w, h, n_label)
+        u = unary_from_labels(label, n_label, gt_prob=0.7, zero_unsure=True)
+        u = np.ascontiguousarray(u)
+        d.setUnaryEnergy(u)
+        d.addPairwiseGaussian(sxy=(3, 3), compat=3)
+        d.addPairwiseBilateral(sxy=(80, 80), srgb=(13, 13, 13), rgbim=image, compat=10)
+        q = d.inference(t)
+        map_result = np.argmax(q, axis=0)
+        result = map_result.reshape((h, w))
+        return result
+
     @classmethod
     def crf_torch(cls, img, annotation, t=5):
         img_data = np.asarray(img, dtype=np.uint8)
@@ -51,6 +78,7 @@ class CRFTool(object):
         for img_data_one, annotation_data_one in zip(img_data, annotation_data):
             img_data_one = np.transpose(img_data_one, axes=(1, 2, 0))
             result_one = cls.crf(img_data_one, annotation_data_one, t=t)
+            # result_one = cls.crf_label(img_data_one, annotation_data_one, t=t)
             result.append(np.expand_dims(result_one, axis=0))
             pass
         return torch.tensor(np.asarray(result))
@@ -562,6 +590,7 @@ class BASRunner(object):
 
     def get_tra_img_label_name(self):
         tra_img_name_list = glob.glob(os.path.join(self.data_dir, self.tra_image_dir, '*.jpg'))
+        tra_img_name_list.sort()
         tra_lbl_name_list = [os.path.join(self.data_dir, self.tra_label_dir, '{}.png'.format(
             os.path.splitext(os.path.basename(img_path))[0])) for img_path in tra_img_name_list]
         tra_cam_name_list = [os.path.join(self.cam_dir, '{}.bmp'.format(
@@ -812,7 +841,7 @@ class BASRunner(object):
 
 if __name__ == '__main__':
     _is_train = False
-    _is_eval = True
+    _is_eval = False
 
     os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3" if _is_train else "0"
     _batch_size = 16 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
@@ -820,14 +849,15 @@ if __name__ == '__main__':
     _is_weight_sum = False
     _size_train = 224
     _size_vis = 256
-    _multi_num = 10
+    _multi_num = 1
     _name_model = "CAM_123_{}_{}".format(_size_train, _size_vis)
-    _name_cam = "CAM_123_{}_{}_AVG_{}{}".format(_size_train, _size_vis, _multi_num, "_S" if _is_weight_sum else "")
+    _name_cam = "CAM_123_{}_{}_AVG_{}{}_Label".format(_size_train, _size_vis,
+                                                      _multi_num, "_S" if _is_weight_sum else "")
 
     if _is_eval:
-        # _tra_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_1"
+        _tra_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_1"
         # _tra_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_9"
-        _tra_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_30"
+        # _tra_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_30"
         _tra_label_name = 'cam_up_norm_C123_crf'
 
         Tools.print("{} {}".format(_tra_label_dir, _tra_label_name))

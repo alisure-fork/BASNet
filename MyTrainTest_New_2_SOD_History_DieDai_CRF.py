@@ -14,9 +14,9 @@ from torchvision import transforms
 from alisuretool.Tools import Tools
 import torch.backends.cudnn as cudnn
 from skimage.io import imread, imsave
-from pydensecrf.utils import unary_from_softmax
 from torch.utils.data import DataLoader, Dataset
 from torchvision.models.resnet import BasicBlock as ResBlock
+from pydensecrf.utils import unary_from_softmax, unary_from_labels
 
 
 #######################################################################################################################
@@ -43,6 +43,33 @@ class CRFTool(object):
 
         result = np.array(q).reshape((2, h, w))
         return result[0]
+
+    @staticmethod
+    def crf_label(image, annotation, t=5, n_label=2):
+        image = np.ascontiguousarray(image)
+        h, w = image.shape[:2]
+        annotation = np.squeeze(np.array(annotation))
+
+        a, b = (0.9, 0.1)
+        if np.max(annotation) > 1:
+            a, b = a * 255, b * 255
+            pass
+        label_extend = np.zeros_like(annotation, dtype=np.int)
+        label_extend[annotation > a] = 2
+        label_extend[annotation < b] = 1
+
+        _, label = np.unique(label_extend, return_inverse=True)
+
+        d = dcrf.DenseCRF2D(w, h, n_label)
+        u = unary_from_labels(label, n_label, gt_prob=0.7, zero_unsure=True)
+        u = np.ascontiguousarray(u)
+        d.setUnaryEnergy(u)
+        d.addPairwiseGaussian(sxy=(3, 3), compat=3)
+        d.addPairwiseBilateral(sxy=(80, 80), srgb=(13, 13, 13), rgbim=image, compat=10)
+        q = d.inference(t)
+        map_result = np.argmax(q, axis=0)
+        result = map_result.reshape((h, w))
+        return result
 
     @classmethod
     def crf_list(cls, img, annotation, t=5, normalization=dcrf.NORMALIZE_SYMMETRIC):
@@ -206,18 +233,19 @@ class DatasetUSOD(Dataset):
                 img = np.asarray(Image.open(img_name).convert("RGB"))
                 ann = np.asarray(Image.open(save_lbl_name).convert("L"))
                 ann = ann / 255
-                if epoch < 10:
-                    ann = ann
-                elif epoch < 20:
-                    output = CRFTool.crf(img, np.expand_dims(ann, axis=0), normalization=dcrf.NO_NORMALIZATION)
-                    ann[output > 0.5] = 1.0
+                if epoch < 9:
+                    ann_final = ann
                 else:
-                    # output = CRFTool.crf(img, np.expand_dims(ann, axis=0), normalization=dcrf.NORMALIZE_SYMMETRIC)
-                    output = CRFTool.crf(img, np.expand_dims(ann, axis=0), normalization=dcrf.NO_NORMALIZATION)
-                    # ann = 0.5 * ann + 0.5 * output
-                    ann[output > 0.5] = 1.0
+                    output1 = CRFTool.crf(img, np.expand_dims(ann, axis=0), normalization=dcrf.NORMALIZE_SYMMETRIC)
+                    output2 = CRFTool.crf(img, np.expand_dims(ann, axis=0), normalization=dcrf.NO_NORMALIZATION)
+
+                    _ann = np.zeros_like(ann)
+                    _ann[output1 >= 0.5] = 1.0
+                    _ann[(output1 < 0.5) & (output2 > 0.5)] = 0.5
+
+                    ann_final = CRFTool.crf_label(img, np.expand_dims(_ann, axis=0))
                     pass
-                imsave(Tools.new_dir(train_lbl_name), np.asarray(ann * 255, dtype=np.uint8), check_contrast=False)
+                imsave(Tools.new_dir(train_lbl_name), np.asarray(ann_final * 255, dtype=np.uint8), check_contrast=False)
             except Exception:
                 Tools.print("{} {}".format(img_name, save_lbl_name))
             pass
@@ -728,7 +756,7 @@ if __name__ == '__main__':
     _cam_label_name = 'cam_up_norm_C123_crf'
 
     Tools.print()
-    _name_model = "CAM_123_AVG_1_SOD_{}_{}{}{}{}{}_DieDai_CRF".format(
+    _name_model = "CAM_123_AVG_1_SOD_{}_{}{}{}{}{}_DieDai_CRF_Label".format(
         _size_train, _size_test, "_{}".format(_cam_label_name), "_Filter" if _is_filter else "",
         "_Supervised" if _is_supervised else "", "_History" if _has_history else "")
     _his_label_dir = "../BASNetTemp/his/{}".format(_name_model)
