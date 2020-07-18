@@ -212,8 +212,10 @@ class DatasetUSOD(Dataset):
                     output = CRFTool.crf(img, np.expand_dims(ann, axis=0), normalization=dcrf.NO_NORMALIZATION)
                     ann[output > 0.5] = 1.0
                 else:
-                    output = CRFTool.crf(img, np.expand_dims(ann, axis=0), normalization=dcrf.NORMALIZE_SYMMETRIC)
-                    ann = 0.5 * ann + 0.5 * output
+                    # output = CRFTool.crf(img, np.expand_dims(ann, axis=0), normalization=dcrf.NORMALIZE_SYMMETRIC)
+                    output = CRFTool.crf(img, np.expand_dims(ann, axis=0), normalization=dcrf.NO_NORMALIZATION)
+                    # ann = 0.5 * ann + 0.5 * output
+                    ann[output > 0.5] = 1.0
                     pass
                 imsave(Tools.new_dir(train_lbl_name), np.asarray(ann * 255, dtype=np.uint8), check_contrast=False)
             except Exception:
@@ -720,13 +722,13 @@ if __name__ == '__main__':
     _history_epoch_freq = 3
     _save_epoch_freq = 3
 
-    # _cam_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_1"
+    _cam_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_1"
     # _cam_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_9"
-    _cam_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_30"
+    # _cam_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_30"
     _cam_label_name = 'cam_up_norm_C123_crf'
 
     Tools.print()
-    _name_model = "CAM_123_AVG_30_SOD_{}_{}{}{}{}{}_DieDai_CRF".format(
+    _name_model = "CAM_123_AVG_1_SOD_{}_{}{}{}{}{}_DieDai_CRF".format(
         _size_train, _size_test, "_{}".format(_cam_label_name), "_Filter" if _is_filter else "",
         "_Supervised" if _is_supervised else "", "_History" if _has_history else "")
     _his_label_dir = "../BASNetTemp/his/{}".format(_name_model)

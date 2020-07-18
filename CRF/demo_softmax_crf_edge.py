@@ -31,6 +31,8 @@ image_list = ["ILSVRC2012_test_00000340", "ILSVRC2012_test_00000363",
 for image_name in image_list:
     image = imread("./data/{}.jpg".format(image_name))
     annotated_image = imread("./data/{}.bmp".format(image_name))
+    # edge_image = imread("./data/{}_edge.bmp".format(image_name))
+    # annotated_image = annotated_image + edge_image
 
     annotated_data = np.expand_dims(annotated_image / 255, axis=0)
     annotated_data = np.concatenate([annotated_data, 1 - annotated_data], axis=0)
@@ -39,6 +41,6 @@ for image_name in image_list:
     output1 = np.asarray(output[0] * 255, dtype=np.uint8)
     output2 = np.asarray(output[1] * 255, dtype=np.uint8)
 
-    imsave("./result/{}_1.bmp".format(image_name), output1, check_contrast=False)
-    imsave("./result/{}_2.bmp".format(image_name), output2, check_contrast=False)
+    imsave("./result/{}_nedge_1.bmp".format(image_name), output1, check_contrast=False)
+    imsave("./result/{}_nedge_2.bmp".format(image_name), output2, check_contrast=False)
     pass
