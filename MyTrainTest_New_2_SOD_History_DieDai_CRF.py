@@ -45,18 +45,15 @@ class CRFTool(object):
         return result[0]
 
     @staticmethod
-    def crf_label(image, annotation, t=5, n_label=2):
+    def crf_label(image, annotation, t=5, n_label=2, a=0.1, b=0.9):
         image = np.ascontiguousarray(image)
         h, w = image.shape[:2]
         annotation = np.squeeze(np.array(annotation))
 
-        a, b = (0.9, 0.1)
-        if np.max(annotation) > 1:
-            a, b = a * 255, b * 255
-            pass
+        a, b = (a * 255, b * 255) if np.max(annotation) > 1 else (a, b)
         label_extend = np.zeros_like(annotation, dtype=np.int)
-        label_extend[annotation > a] = 2
-        label_extend[annotation < b] = 1
+        label_extend[annotation >= b] = 2
+        label_extend[annotation <= a] = 1
 
         _, label = np.unique(label_extend, return_inverse=True)
 
@@ -65,7 +62,7 @@ class CRFTool(object):
         u = np.ascontiguousarray(u)
         d.setUnaryEnergy(u)
         d.addPairwiseGaussian(sxy=(3, 3), compat=3)
-        d.addPairwiseBilateral(sxy=(80, 80), srgb=(13, 13, 13), rgbim=image, compat=10)
+        d.addPairwiseBilateral(sxy=(80, 80), srgb=(13, 13, 13), rgbim=np.copy(image), compat=10)
         q = d.inference(t)
         map_result = np.argmax(q, axis=0)
         result = map_result.reshape((h, w))
@@ -154,8 +151,8 @@ class Compose(transforms.Compose):
 
 class DatasetUSOD(Dataset):
 
-    def __init__(self, img_name_list, lab_name_list, cam_lbl_name_list,
-                 his_train_lbl_name_list, his_save_lbl_name_list, size_train=224):
+    def __init__(self, img_name_list, lab_name_list, cam_lbl_name_list, his_train_lbl_name_list,
+                 his_save_lbl_name_list, size_train=224, label_a=0.2, label_b=0.5, has_crf=False):
         self.img_name_list = img_name_list
         self.tra_lab_name_list = lab_name_list
         self.cam_lbl_name_list = cam_lbl_name_list
@@ -163,6 +160,10 @@ class DatasetUSOD(Dataset):
         self.his_save_lbl_name_list = his_save_lbl_name_list
         self.transform = Compose([FixedResized(size_train, size_train), RandomHorizontalFlip(), ToTensor(),
                                   Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))])
+
+        self.label_a = label_a
+        self.label_b = label_b
+        self.has_crf = has_crf
 
         self.is_filter = False
         self.lbl_name_list_for_train = None
@@ -208,10 +209,10 @@ class DatasetUSOD(Dataset):
                 image, label, image_for_crf, idx, param = self.__getitem__(np.random.randint(0, self.__len__()))
             pass
 
-        # 处理 label
-        label[label > 0.9] = 1
-        label[label < 0.1] = 0
-        label[(0.1 < label) & (label < 0.9)] = 255
+        # 重要参数1: 处理 label
+        label[label >= self.label_b] = 1
+        label[label <= self.label_a] = 0
+        label[(self.label_a < label) & (label < self.label_b)] = 255
 
         return image, label, image_for_crf, idx, param
 
@@ -224,32 +225,22 @@ class DatasetUSOD(Dataset):
         im.save(h_path)
         pass
 
-    @staticmethod
-    def _crf_one_pool(pool_id, epoch, img_name_list, his_save_lbl_name_list, his_train_lbl_name_list):
-        # Tools.print("{} {} start".format(pool_id, len(img_name_list)))
+    def _crf_one_pool(self, pool_id, epoch, img_name_list, his_save_lbl_name_list, his_train_lbl_name_list):
         for i, (img_name, save_lbl_name, train_lbl_name) in enumerate(zip(
                 img_name_list, his_save_lbl_name_list, his_train_lbl_name_list)):
             try:
                 img = np.asarray(Image.open(img_name).convert("RGB"))
                 ann = np.asarray(Image.open(save_lbl_name).convert("L"))
                 ann = ann / 255
-                if epoch < 9:
-                    ann_final = ann
-                else:
-                    output1 = CRFTool.crf(img, np.expand_dims(ann, axis=0), normalization=dcrf.NORMALIZE_SYMMETRIC)
-                    output2 = CRFTool.crf(img, np.expand_dims(ann, axis=0), normalization=dcrf.NO_NORMALIZATION)
 
-                    _ann = np.zeros_like(ann)
-                    _ann[output1 >= 0.5] = 1.0
-                    _ann[(output1 < 0.5) & (output2 > 0.5)] = 0.5
-
-                    ann_final = CRFTool.crf_label(img, np.expand_dims(_ann, axis=0))
+                if self.has_crf:
+                    ann = CRFTool.crf_label(img, np.expand_dims(ann, axis=0), a=self.label_a, b=self.label_b)
                     pass
-                imsave(Tools.new_dir(train_lbl_name), np.asarray(ann_final * 255, dtype=np.uint8), check_contrast=False)
+
+                imsave(Tools.new_dir(train_lbl_name), np.asarray(ann * 255, dtype=np.uint8), check_contrast=False)
             except Exception:
-                Tools.print("{} {}".format(img_name, save_lbl_name))
+                Tools.print("{} {} {} {}".format(pool_id, epoch, img_name, save_lbl_name))
             pass
-        # Tools.print("{} {} end".format(pool_id, len(img_name_list)))
         pass
 
     def crf_dir(self, epoch=0):
@@ -421,7 +412,7 @@ class BASNet(nn.Module):
 
 class BASRunner(object):
 
-    def __init__(self, batch_size=8, size_train=224, size_test=256,
+    def __init__(self, batch_size=8, size_train=224, size_test=256, label_a=0.2, label_b=0.5, has_crf=True,
                  data_dir='/mnt/4T/Data/SOD/DUTS/DUTS-TR',
                  tra_image_dir='DUTS-TR-Image', tra_label_dir="DUTS-TR-Mask",
                  cam_label_dir="../BASNetTemp/cam/CAM_123_224_256", cam_label_name='cam_up_norm_C123',
@@ -430,16 +421,21 @@ class BASRunner(object):
         self.size_train = size_train
         self.size_test = size_test
 
+        self.label_a = label_a
+        self.label_b = label_b
+        self.has_crf = has_crf
+
         # Dataset
         self.model_dir = model_dir
         self.data_dir = data_dir
         (self.img_name_list, self.lbl_name_list, self.cam_lbl_name_list, self.his_train_lbl_name_list,
          self.his_save_lbl_name_list) = self.get_tra_img_label_name(tra_image_dir, tra_label_dir,
                                                                     cam_label_dir, cam_label_name, his_label_dir)
-        self.dataset_sod = DatasetUSOD(img_name_list=self.img_name_list, lab_name_list=self.lbl_name_list,
-                                       cam_lbl_name_list=self.cam_lbl_name_list,
-                                       his_train_lbl_name_list=self.his_train_lbl_name_list,
-                                       his_save_lbl_name_list=self.his_save_lbl_name_list, size_train=self.size_train)
+        self.dataset_sod = DatasetUSOD(
+            img_name_list=self.img_name_list, lab_name_list=self.lbl_name_list,
+            cam_lbl_name_list=self.cam_lbl_name_list, his_train_lbl_name_list=self.his_train_lbl_name_list,
+            his_save_lbl_name_list=self.his_save_lbl_name_list, size_train=self.size_train,
+            label_a=self.label_a, label_b=self.label_b, has_crf=self.has_crf)
         self.data_loader_sod = DataLoader(self.dataset_sod, self.batch_size, shuffle=True, num_workers=8)
         self.data_batch_num = len(self.data_loader_sod)
 
@@ -472,6 +468,7 @@ class BASRunner(object):
 
     def get_tra_img_label_name(self, tra_image_dir, tra_label_dir, cam_label_dir, cam_label_name, his_label_dir):
         tra_img_name_list = glob.glob(os.path.join(self.data_dir, tra_image_dir, '*.jpg'))
+        tra_img_name_list.sort()
 
         tra_lbl_name_list = [os.path.join(self.data_dir, tra_label_dir, '{}.png'.format(
             os.path.splitext(os.path.basename(img_path))[0])) for img_path in tra_img_name_list]
@@ -500,7 +497,6 @@ class BASRunner(object):
 
     def train(self, epoch_num=200, start_epoch=0, is_filter=False,
               is_supervised=False, has_history=False, history_epoch_start=10, history_epoch_freq=10):
-
         all_loss = 0
         for epoch in range(start_epoch, epoch_num+1):
             Tools.print()
@@ -721,6 +717,10 @@ CAM_123_224_256_AVG_30 CAM_123_SOD_224_256_cam_up_norm_C123_crf
 2020-07-17 20:42:04  Test 29 avg mae=0.12673813816468427 score=0.5533320124713951
 2020-07-17 20:51:51 Train 29 avg mae=0.14355711485400344 score=0.7856480570591794
 2020-07-17 22:46:44  Test  0 avg mae=0.12388358673282490 score=0.5612494814195114
+
+../BASNetTemp/saved_models/CAM_123_AVG_1_SOD_224_256_cam_up_norm_C123_crf_History_DieDai_CRF_Label/14_train_0.102.pth
+2020-07-18 21:57:49 Test 14 avg mae=0.14567803747597194 score=0.5523819198974637
+2020-07-18 22:03:20 Train 14 avg mae=0.10139584287323734 score=0.8428110060199896
 """
 
 
@@ -733,11 +733,11 @@ CAM_123_224_256_AVG_30 CAM_123_SOD_224_256_cam_up_norm_C123_crf
 
 
 if __name__ == '__main__':
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
     _size_train = 224
     _size_test = 256
-    _batch_size = 16 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
+    _batch_size = 12 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
 
     # _size_train = 320
     # _size_test = 320
@@ -750,16 +750,22 @@ if __name__ == '__main__':
     _history_epoch_freq = 3
     _save_epoch_freq = 3
 
+    _label_a = 0.2
+    _label_b = 0.5
+    _has_crf = False
+
     _cam_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_1"
     # _cam_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_9"
     # _cam_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_30"
     _cam_label_name = 'cam_up_norm_C123_crf'
 
-    Tools.print()
-    _name_model = "CAM_123_AVG_1_SOD_{}_{}{}{}{}{}_DieDai_CRF_Label".format(
-        _size_train, _size_test, "_{}".format(_cam_label_name), "_Filter" if _is_filter else "",
-        "_Supervised" if _is_supervised else "", "_History" if _has_history else "")
+    _name_model = "CAM_123_AVG_1_SOD_{}_{}{}{}{}{}_DieDai{}_{}".format(
+        _size_train, _size_test, "_{}".format(_cam_label_name),
+        "_Filter" if _is_filter else "", "_Supervised" if _is_supervised else "",
+        "_History" if _has_history else "", "_CRF" if _has_crf else "",  "{}_{}".format(_label_a, _label_b))
     _his_label_dir = "../BASNetTemp/his/{}".format(_name_model)
+
+    Tools.print()
     Tools.print(_name_model)
     Tools.print(_cam_label_name)
     Tools.print(_cam_label_dir)
@@ -768,6 +774,7 @@ if __name__ == '__main__':
 
     bas_runner = BASRunner(batch_size=_batch_size, size_train=_size_train, size_test=_size_test,
                            cam_label_dir=_cam_label_dir, cam_label_name=_cam_label_name, his_label_dir=_his_label_dir,
+                           label_a=_label_a, label_b=_label_b, has_crf=_has_crf,
                            data_dir="/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR",
                            model_dir="../BASNetTemp/saved_models/{}".format(_name_model))
 
