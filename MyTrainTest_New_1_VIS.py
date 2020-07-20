@@ -6,6 +6,7 @@ import numpy as np
 from tqdm import tqdm
 import torch.nn as nn
 from PIL import Image
+from SODData import SODData
 import torch.optim as optim
 from torchvision import models
 import torch.nn.functional as F
@@ -527,19 +528,18 @@ class BASRunner(object):
     def __init__(self, batch_size=8, multi_num=16, size_train=224, size_vis=256, is_train=True,
                  clustering_num_1=128, clustering_num_2=256, clustering_num_3=512, is_weight_sum=False,
                  clustering_ratio_1=1, clustering_ratio_2=1.5, clustering_ratio_3=2,
-                 data_dir='/mnt/4T/Data/SOD/DUTS/DUTS-TR', tra_image_dir='DUTS-TR-Image',
-                 tra_label_dir='DUTS-TR-Mask', model_dir="./saved_models/cam", cam_dir="./cam/cam"):
+                 tra_img_name_list=None, tra_lbl_name_list=None, tra_data_name_list=None,
+                 model_dir="./saved_models/cam", cam_dir="./cam/cam"):
         self.batch_size = batch_size
         self.is_train = is_train
         self.cam_dir = Tools.new_dir(cam_dir) if not self.is_train else None
 
         # Dataset
         self.model_dir = model_dir
-        self.data_dir = data_dir
-        self.tra_image_dir = tra_image_dir
-        self.tra_label_dir = tra_label_dir
-        self.tra_img_name_list, tra_lbl_name_list, self.tra_cam_name_list = self.get_tra_img_label_name()
-        self.tra_cam_name_list = None if self.is_train else self.tra_cam_name_list
+        self.tra_img_name_list = tra_img_name_list
+        self.tra_lbl_name_list = tra_lbl_name_list
+        self.tra_data_name_list = tra_data_name_list
+        self.tra_cam_name_list = self.get_tra_cam_name() if not self.is_train else None
 
         if self.is_train:
             self.dataset_sod = DatasetUSOD(img_name_list=self.tra_img_name_list, size_train=size_train)
@@ -588,17 +588,14 @@ class BASRunner(object):
         Tools.print("restore from {}".format(model_file_name))
         pass
 
-    def get_tra_img_label_name(self):
-        tra_img_name_list = glob.glob(os.path.join(self.data_dir, self.tra_image_dir, '*.jpg'))
-        tra_img_name_list.sort()
-        tra_lbl_name_list = [os.path.join(self.data_dir, self.tra_label_dir, '{}.png'.format(
-            os.path.splitext(os.path.basename(img_path))[0])) for img_path in tra_img_name_list]
-        tra_cam_name_list = [os.path.join(self.cam_dir, '{}.bmp'.format(
-            os.path.splitext(os.path.basename(img_path))[0])) for img_path in tra_img_name_list]
-        Tools.print("train images: {}".format(len(tra_img_name_list)))
-        Tools.print("train labels: {}".format(len(tra_lbl_name_list)))
+    def get_tra_cam_name(self):
+        tra_cam_name_list = [os.path.join(self.cam_dir, '{}_{}.bmp'.format(dataset_name, os.path.splitext(
+            os.path.basename(img_path))[0])) for img_path, dataset_name in zip(
+            self.tra_img_name_list, self.tra_data_name_list)]
+        Tools.print("train images: {}".format(len(self.tra_img_name_list)))
+        Tools.print("train labels: {}".format(len(self.tra_lbl_name_list)))
         Tools.print("train cams: {}".format(len(tra_cam_name_list)))
-        return tra_img_name_list, tra_lbl_name_list, tra_cam_name_list
+        return tra_cam_name_list
 
     def all_loss_fusion(self, mic_1_out, mic_2_out, mic_3_out, mic_labels_1, mic_labels_2, mic_labels_3):
         loss_mic_1 = self.mic_loss(mic_1_out, mic_labels_1)
@@ -780,15 +777,11 @@ class BASRunner(object):
         pass
 
     @staticmethod
-    def eval_vis(tra_label_dir, tra_label_name, size_eval=None, th_num=100, beta_2=0.3):
-        data_dir = '/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR'
-        image_dir, label_dir = 'DUTS-TR-Image', 'DUTS-TR-Mask'
-        img_name_list = glob.glob(os.path.join(data_dir, image_dir, '*.jpg'))
-
-        lbl_name_list = [os.path.join(data_dir, label_dir, '{}.png'.format(
-            os.path.splitext(os.path.basename(img_path))[0])) for img_path in img_name_list]
-        lbl2_name_list = [os.path.join(tra_label_dir, '{}_{}.bmp'.format(os.path.splitext(
-            os.path.basename(img_path))[0], tra_label_name)) for img_path in img_name_list]
+    def eval_vis(img_name_list, lbl_name_list, data_name_list,
+                 vis_label_dir, vis_label_name, size_eval=None, th_num=100, beta_2=0.3):
+        lbl2_name_list = [os.path.join(vis_label_dir, '{}_{}_{}.bmp'.format(
+            data_name, os.path.splitext(os.path.basename(img_path))[0], vis_label_name)
+                                       ) for img_path, data_name in zip(img_name_list, data_name_list)]
 
         eval_cam = EvalCAM(lbl_name_list, lbl2_name_list, size_eval=size_eval, th_num=th_num)
 
@@ -840,7 +833,8 @@ class BASRunner(object):
 """
 
 if __name__ == '__main__':
-    _is_train = False
+    _is_all_data = True
+    _is_train = True
     _is_eval = False
 
     os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3" if _is_train else "0"
@@ -850,9 +844,11 @@ if __name__ == '__main__':
     _size_train = 224
     _size_vis = 256
     _multi_num = 1
-    _name_model = "CAM_123_{}_{}".format(_size_train, _size_vis)
-    _name_cam = "CAM_123_{}_{}_AVG_{}{}_Label".format(_size_train, _size_vis,
-                                                      _multi_num, "_S" if _is_weight_sum else "")
+    _name_model = "CAM_123_{}_{}_D{}".format(_size_train, _size_vis, _is_all_data)
+    _name_cam = "CAM_123_{}_{}_A{}_S{}_D{}".format(_size_train, _size_vis, _multi_num, _is_weight_sum, _is_all_data)
+
+    sod_data = SODData(data_root_path="/media/ubuntu/4T/ALISURE/Data/SOD")
+    all_image, all_mask, all_dataset_name = sod_data.get_all_train_and_mask() if _is_all_data else sod_data.duts_tr()
 
     if _is_eval:
         _tra_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_1"
@@ -861,16 +857,16 @@ if __name__ == '__main__':
         _tra_label_name = 'cam_up_norm_C123_crf'
 
         Tools.print("{} {}".format(_tra_label_dir, _tra_label_name))
-        BASRunner.eval_vis(_tra_label_dir, _tra_label_name, size_eval=_size_vis)
+        _image_list, _mask_list, _dataset_list = sod_data.duts_te()
+        BASRunner.eval_vis(_image_list, _mask_list, _dataset_list, _tra_label_dir, _tra_label_name, size_eval=_size_vis)
     else:
         bas_runner = BASRunner(batch_size=_batch_size, multi_num=_multi_num, is_weight_sum=_is_weight_sum,
                                size_train=_size_train, size_vis=_size_vis, is_train=_is_train,
                                clustering_num_1=128 * 4, clustering_num_2=128 * 4, clustering_num_3=128 * 4,
                                clustering_ratio_1=1, clustering_ratio_2=1.5, clustering_ratio_3=2,
-                               data_dir="/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR",
-                               cam_dir="../BASNetTemp/cam/{}".format(_name_cam),
+                               tra_img_name_list=all_image, tra_lbl_name_list=all_mask,
+                               tra_data_name_list=all_dataset_name, cam_dir="../BASNetTemp/cam/{}".format(_name_cam),
                                model_dir="../BASNetTemp/saved_models/{}".format(_name_model))
-
         if _is_train:  # 训练
             bas_runner.train(epoch_num=1000, start_epoch=0)
         else:  # 得到响应图
