@@ -165,17 +165,11 @@ class DatasetUSOD(Dataset):
         self.label_b = label_b
         self.has_crf = has_crf
 
-        self.is_filter = False
         self.lbl_name_list_for_train = None
         self.lbl_name_list_for_save = self.his_save_lbl_name_list
 
         self.image_size_list = [Image.open(image_name).size for image_name in self.img_name_list]
         Tools.print("DatasetUSOD: size_train={}".format(size_train))
-        pass
-
-    def set_filter(self, is_filter=False):
-        Tools.print("DatasetUSOD is_filter={}".format(is_filter))
-        self.is_filter = is_filter
         pass
 
     def set_label(self, is_supervised, cam_for_train=True):
@@ -202,19 +196,13 @@ class DatasetUSOD(Dataset):
 
         image, label, image_for_crf, param = self.transform(image, label, image, [])
 
-        if self.is_filter:
-            ratio = np.sum(np.asarray(label)) / (label.shape[1] * label.shape[2])
-            if ratio < 0.01 or ratio > 0.9:
-                # Tools.print("{} {:.4f} {}".format(idx, ratio, self.lab_name_list[idx]))
-                image, label, image_for_crf, idx, param = self.__getitem__(np.random.randint(0, self.__len__()))
-            pass
-
         # 重要参数1: 处理 label
-        label[label >= self.label_b] = 1
-        label[label <= self.label_a] = 0
-        label[(self.label_a < label) & (label < self.label_b)] = 255
+        label_final = torch.zeros_like(label)
+        label_final[label >= self.label_b] = 1
+        label_final[label <= self.label_a] = 0
+        label_final[(self.label_a < label) & (label < self.label_b)] = 255
 
-        return image, label, image_for_crf, idx, param
+        return image, label_final, image_for_crf, idx, param
 
     def save_history(self, history, idx):
         h_path = self.lbl_name_list_for_save[idx]
@@ -495,7 +483,7 @@ class BASRunner(object):
             self.dataset_sod.save_history(idx=int(index), history=np.asarray(history.squeeze()))
         pass
 
-    def train(self, epoch_num=200, start_epoch=0, is_filter=False,
+    def train(self, epoch_num=200, start_epoch=0, save_epoch_freq=2,
               is_supervised=False, has_history=False, history_epoch_start=10, history_epoch_freq=10):
         all_loss = 0
         for epoch in range(start_epoch, epoch_num+1):
@@ -503,18 +491,14 @@ class BASRunner(object):
             self._adjust_learning_rate(epoch)
             Tools.print('Epoch:{:03d}, lr={:.5f}'.format(epoch, self.optimizer.param_groups[0]['lr']))
 
-            is_test = False
             ###########################################################################
             # 0 准备
-            self.dataset_sod.set_filter(is_filter=is_filter)
             if epoch == 0:  # 0
                 self.dataset_sod.set_label(is_supervised=is_supervised, cam_for_train=True)
             elif epoch == history_epoch_start:  # 5
                 self.dataset_sod.set_label(is_supervised=is_supervised, cam_for_train=False)
-            if epoch > 0 and (epoch-history_epoch_start+1) % history_epoch_freq == 0:  # 4, 9, 14
-                self.dataset_sod.set_filter(is_filter=False)
-                is_test = True
-            if epoch > 0 and (epoch - history_epoch_start) % history_epoch_freq == 0:  # 5, 10, 15
+
+            if epoch >= history_epoch_start and (epoch - history_epoch_start) % history_epoch_freq == 0:  # 5, 10, 15
                 self.dataset_sod.crf_dir()
             ###########################################################################
 
@@ -562,8 +546,7 @@ class BASRunner(object):
 
             ###########################################################################
             # 2 保存模型
-            # if (epoch + 1) % save_epoch_freq == 0:
-            if is_test:
+            if (epoch + 1) % save_epoch_freq == 0:
                 save_file_name = Tools.new_dir(os.path.join(
                     self.model_dir, "{}_train_{:.3f}.pth".format(epoch, all_loss/self.data_batch_num)))
                 torch.save(self.net.state_dict(), save_file_name)
@@ -721,6 +704,47 @@ CAM_123_224_256_AVG_30 CAM_123_SOD_224_256_cam_up_norm_C123_crf
 ../BASNetTemp/saved_models/CAM_123_AVG_1_SOD_224_256_cam_up_norm_C123_crf_History_DieDai_CRF_Label/14_train_0.102.pth
 2020-07-18 21:57:49 Test 14 avg mae=0.14567803747597194 score=0.5523819198974637
 2020-07-18 22:03:20 Train 14 avg mae=0.10139584287323734 score=0.8428110060199896
+
+../BASNetTemp/saved_models/CAM_123_AVG_1_SOD_224_256_cam_up_norm_C123_crf_History_DieDai_CRF_0.2_0.5/8_train_0.143.pth
+2020-07-19 11:31:31 Test 8 avg mae=0.15584810364431298 score=0.5628301869443335
+2020-07-19 11:39:51 Train 8 avg mae=0.11538822498087856 score=0.833913384298952
+
+../BASNetTemp/saved_models/CAM_123_AVG_1_SOD_224_256_cam_up_norm_C123_crf_History_DieDai_0.2_0.5/20_train_0.026.pth
+2020-07-19 13:20:54 Test 20 avg mae=0.24891340896167163 score=0.5774716674568292
+2020-07-19 13:27:42 Train 20 avg mae=0.1492173440119421 score=0.805897788240359
+
+../BASNetTemp/saved_models/CAM_123_AVG_1_SOD_224_256_cam_up_norm_C123_crf_History_DieDai_0.3_0.5/8_train_0.053.pth
+2020-07-19 17:24:25 Test 8 avg mae=0.19789807427327785 score=0.5502766274410585
+2020-07-19 17:31:40 Train 8 avg mae=0.12541010602462022 score=0.8155412308300685
+
+../BASNetTemp/saved_models/CAM_123_AVG_1_SOD_224_256_cam_up_norm_C123_crf_History_DieDai_CRF_0.3_0.5/14_train_0.102.pth
+2020-07-19 18:32:07 Test 14 avg mae=0.13176580212636893 score=0.571132824037257
+2020-07-19 18:40:08 Train 14 avg mae=0.10157277859662744 score=0.8461293087280946
+
+../BASNetTemp/saved_models/CAM_123_AVG_1_SOD_224_256_cam_up_norm_C123_crf_History_DieDai_0.2_0.5_211/8_train_0.030.pth
+2020-07-19 18:39:35 Test 8 avg mae=0.27348523190453966 score=0.5844968546566901
+2020-07-19 18:47:37 Train 8 avg mae=0.16903361074457116 score=0.7711723267682993
+
+../BASNetTemp/saved_models/CAM_123_AVG_1_SOD_224_256_cam_up_norm_C123_crf_History_DieDai_CRF_0.2_0.5_211/2_train_0.205.pth
+2020-07-19 16:54:58 Test 2 avg mae=0.17555865894354045 score=0.5616564696108529
+2020-07-19 17:01:05 Train 2 avg mae=0.13811385584148494 score=0.8328454841678359
+
+../BASNetTemp/saved_models/CAM_123_AVG_1_SOD_224_256_cam_up_norm_C123_crf_History_DieDai_0.4_0.6_211/11_train_0.032.pth
+2020-07-19 21:42:47 Test 11 avg mae=0.14603591932601748 score=0.5654083052136333
+2020-07-19 21:50:41 Train 11 avg mae=0.11518737672489475 score=0.8126329613212944
+
+../BASNetTemp/saved_models/CAM_123_AVG_1_SOD_320_320_cam_up_norm_C123_crf_History_DieDai_0.4_0.6_211/7_train_0.047.pth
+2020-07-19 22:12:16 Test 7 avg mae=0.12730444034644564 score=0.5778294759011047
+2020-07-19 22:25:03 Train 7 avg mae=0.12324442881526369 score=0.8176507201039612
+
+../BASNetTemp/saved_models/CAM_123_AVG_1_SOD_320_320_cam_up_norm_C123_crf_History_DieDai_0.3_0.5_4 1 1/5_train_0.068.pth
+2020-07-20 01:40:57 Test 5 avg mae=0.14707826134885194 score=0.6079573040650241
+2020-07-20 01:51:13 Train 5 avg mae=0.11038006722475543 score=0.8283362765800202
+
+../BASNetTemp/saved_models/CAM_123_AVG_1_SOD_320_320_cam_up_norm_C123_crf_History_DieDai_CRF_0.3_0.5_4 1 1/7_train_0.143.pth
+2020-07-20 02:31:56 Test 7 avg mae=0.12767476480525392 score=0.6121793060648243
+2020-07-20 02:41:45 Train 7 avg mae=0.1078902934931896 score=0.8558218656264965
+
 """
 
 
@@ -729,40 +753,41 @@ CAM_123_224_256_AVG_30 CAM_123_SOD_224_256_cam_up_norm_C123_crf
 2. 端到端训练时更新SOD
 + 3. 挑选训练样本!!!  
 4. 在ImageNet上训练!!!
+
+无CRF偏向于多,但是边界不准确
+有CRF偏向于少,但是边界准确
 """
 
 
 if __name__ == '__main__':
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "3"
 
-    _size_train = 224
-    _size_test = 256
-    _batch_size = 12 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
+    # _size_train, _size_test = 224, 256
+    # _batch_size = 12 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
 
-    # _size_train = 320
-    # _size_test = 320
-    # _batch_size = 8 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
+    _size_train, _size_test = 320, 320
+    _batch_size = 8 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
 
     _is_supervised = False
     _has_history = True
-    _is_filter = False  # Param
-    _history_epoch_start = 3
-    _history_epoch_freq = 3
-    _save_epoch_freq = 3
+    _history_epoch_start, _history_epoch_freq, _save_epoch_freq = 4, 1, 1
 
-    _label_a = 0.2
-    _label_b = 0.5
-    _has_crf = False
+    # _label_a, _label_b, _has_crf = 0.2, 0.5, False  # OK
+    # _label_a, _label_b, _has_crf = 0.2, 0.5, True  # OK
+    # _label_a, _label_b, _has_crf = 0.3, 0.5, False  # OK
+    _label_a, _label_b, _has_crf = 0.3, 0.5, True  # OK OK large 0.612, 0.856
+    # _label_a, _label_b, _has_crf = 0.4, 0.6, False  # OK
+    # _label_a, _label_b, _has_crf = 0.4, 0.6, True
 
     _cam_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_1"
     # _cam_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_9"
     # _cam_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_30"
     _cam_label_name = 'cam_up_norm_C123_crf'
 
-    _name_model = "CAM_123_AVG_1_SOD_{}_{}{}{}{}{}_DieDai{}_{}".format(
-        _size_train, _size_test, "_{}".format(_cam_label_name),
-        "_Filter" if _is_filter else "", "_Supervised" if _is_supervised else "",
-        "_History" if _has_history else "", "_CRF" if _has_crf else "",  "{}_{}".format(_label_a, _label_b))
+    _name_model = "CAM_123_AVG_1_SOD_{}_{}{}{}{}_DieDai{}_{}_{}".format(
+        _size_train, _size_test, "_{}".format(_cam_label_name),  "_Supervised" if _is_supervised else "",
+        "_History" if _has_history else "", "_CRF" if _has_crf else "",  "{}_{}".format(_label_a, _label_b),
+        "{}{}{}".format(_history_epoch_start, _history_epoch_freq, _save_epoch_freq))
     _his_label_dir = "../BASNetTemp/his/{}".format(_name_model)
 
     Tools.print()
@@ -780,8 +805,7 @@ if __name__ == '__main__':
 
     bas_runner.load_model(model_file_name="../BASNetTemp/saved_models/CAM_123_224_256/930_train_1.172.pth")
     bas_runner.train(epoch_num=30, start_epoch=0, history_epoch_start=_history_epoch_start,
-                     history_epoch_freq=_history_epoch_freq, is_supervised=_is_supervised,
-                     has_history=_has_history, is_filter=_is_filter)
+                     history_epoch_freq=_history_epoch_freq, is_supervised=_is_supervised, has_history=_has_history)
 
     # _model_name = "CAM_123_SOD_224_256_cam_up_norm_C123_crf_Filter_History_DieDai_CRF"
     # bas_runner.load_model(model_file_name="../BASNetTemp/saved_models/{}/30_train_0.011.pth".format(_model_name))
