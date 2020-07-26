@@ -6,6 +6,7 @@ import numpy as np
 from tqdm import tqdm
 import torch.nn as nn
 from PIL import Image
+from SODData import SODData
 import torch.optim as optim
 from torchvision import models
 import multiprocessing as multi_p
@@ -401,8 +402,7 @@ class BASNet(nn.Module):
 class BASRunner(object):
 
     def __init__(self, batch_size=8, size_train=224, size_test=256, label_a=0.2, label_b=0.5, has_crf=True,
-                 data_dir='/mnt/4T/Data/SOD/DUTS/DUTS-TR',
-                 tra_image_dir='DUTS-TR-Image', tra_label_dir="DUTS-TR-Mask",
+                 tra_img_name_list=None, tra_lbl_name_list=None, tra_data_name_list=None,
                  cam_label_dir="../BASNetTemp/cam/CAM_123_224_256", cam_label_name='cam_up_norm_C123',
                  his_label_dir="../BASNetTemp/his/CAM_123_224_256", model_dir="./saved_models/model"):
         self.batch_size = batch_size
@@ -415,9 +415,11 @@ class BASRunner(object):
 
         # Dataset
         self.model_dir = model_dir
-        self.data_dir = data_dir
-        (self.img_name_list, self.lbl_name_list, self.cam_lbl_name_list, self.his_train_lbl_name_list,
-         self.his_save_lbl_name_list) = self.get_tra_img_label_name(tra_image_dir, tra_label_dir,
+        self.img_name_list = tra_img_name_list
+        self.lbl_name_list = tra_lbl_name_list
+        self.dataset_name_list = tra_data_name_list
+        (self.cam_lbl_name_list, self.his_train_lbl_name_list,
+         self.his_save_lbl_name_list) = self.get_tra_img_label_name(self.img_name_list, self.dataset_name_list,
                                                                     cam_label_dir, cam_label_name, his_label_dir)
         self.dataset_sod = DatasetUSOD(
             img_name_list=self.img_name_list, lab_name_list=self.lbl_name_list,
@@ -454,24 +456,21 @@ class BASRunner(object):
         Tools.print("restore from {}".format(model_file_name))
         pass
 
-    def get_tra_img_label_name(self, tra_image_dir, tra_label_dir, cam_label_dir, cam_label_name, his_label_dir):
-        tra_img_name_list = glob.glob(os.path.join(self.data_dir, tra_image_dir, '*.jpg'))
-        tra_img_name_list.sort()
+    @staticmethod
+    def get_tra_img_label_name( img_name_list, dataset_name_list, cam_label_dir, cam_label_name, his_label_dir):
+        cam_lbl_name_list = [os.path.join(
+            cam_label_dir, '{}_{}_{}.bmp'.format(dataset_name, os.path.splitext(os.path.basename(
+                img_path))[0], cam_label_name)) for img_path, dataset_name in zip(img_name_list, dataset_name_list)]
 
-        tra_lbl_name_list = [os.path.join(self.data_dir, tra_label_dir, '{}.png'.format(
-            os.path.splitext(os.path.basename(img_path))[0])) for img_path in tra_img_name_list]
+        his_train_lbl_name_list = [os.path.join(
+            his_label_dir, "train", '{}_{}_{}.bmp'.format(dataset_name, os.path.splitext(os.path.basename(
+                img_path))[0], cam_label_name)) for img_path, dataset_name in zip(img_name_list, dataset_name_list)]
+        his_save_lbl_name_list = [os.path.join(
+            his_label_dir, "save", '{}_{}_{}.bmp'.format(dataset_name, os.path.splitext(os.path.basename(
+                img_path))[0], cam_label_name)) for img_path, dataset_name in zip(img_name_list, dataset_name_list)]
 
-        cam_lbl_name_list = [os.path.join(cam_label_dir, '{}_{}.bmp'.format(os.path.splitext(
-            os.path.basename(img_path))[0], cam_label_name)) for img_path in tra_img_name_list]
-
-        his_train_lbl_name_list = [os.path.join(his_label_dir, "train", '{}_{}.bmp'.format(os.path.splitext(
-            os.path.basename(img_path))[0], cam_label_name)) for img_path in tra_img_name_list]
-        his_save_lbl_name_list = [os.path.join(his_label_dir, "save", '{}_{}.bmp'.format(os.path.splitext(
-            os.path.basename(img_path))[0], cam_label_name)) for img_path in tra_img_name_list]
-
-        Tools.print("train images: {}".format(len(tra_img_name_list)))
-        Tools.print("train labels: {}".format(len(tra_lbl_name_list)))
-        return tra_img_name_list, tra_lbl_name_list, cam_lbl_name_list, his_train_lbl_name_list, his_save_lbl_name_list
+        Tools.print("train images: {}".format(len(img_name_list)))
+        return cam_lbl_name_list, his_train_lbl_name_list, his_save_lbl_name_list
 
     def all_loss_fusion(self, sod_output, sod_label, ignore_label=255.0):
         positions = sod_label.view(-1, 1) != ignore_label
@@ -760,14 +759,15 @@ CAM_123_224_256_AVG_30 CAM_123_SOD_224_256_cam_up_norm_C123_crf
 
 
 if __name__ == '__main__':
-    os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
 
-    # _size_train, _size_test = 224, 256
-    # _batch_size = 12 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
+    _size_train, _size_test = 224, 256
+    _batch_size = 12 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
 
-    _size_train, _size_test = 320, 320
-    _batch_size = 8 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
+    # _size_train, _size_test = 320, 320
+    # _batch_size = 8 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
 
+    _is_all_data = True
     _is_supervised = False
     _has_history = True
     _history_epoch_start, _history_epoch_freq, _save_epoch_freq = 4, 1, 1
@@ -779,14 +779,19 @@ if __name__ == '__main__':
     # _label_a, _label_b, _has_crf = 0.4, 0.6, False  # OK
     # _label_a, _label_b, _has_crf = 0.4, 0.6, True
 
-    _cam_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_1"
+    # _cam_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_1"
     # _cam_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_9"
     # _cam_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_30"
+    # _cam_label_name = 'cam_up_norm_C123_crf'
+
+    _cam_label_dir = "CAM_123_224_256_A1_SFalse_DTrue"
+    # _cam_label_dir = "CAM_123_224_256_A5_SFalse_DTrue"
     _cam_label_name = 'cam_up_norm_C123_crf'
 
-    _name_model = "CAM_123_AVG_1_SOD_{}_{}{}{}{}_DieDai{}_{}_{}".format(
-        _size_train, _size_test, "_{}".format(_cam_label_name),  "_Supervised" if _is_supervised else "",
-        "_History" if _has_history else "", "_CRF" if _has_crf else "",  "{}_{}".format(_label_a, _label_b),
+    _name_model = "{}_{}_{}{}{}{}_DieDai{}_{}_{}".format(
+        _cam_label_dir, _size_train, _size_test, "_{}".format(_cam_label_name),
+        "_Supervised" if _is_supervised else "", "_History" if _has_history else "",
+        "_CRF" if _has_crf else "",  "{}_{}".format(_label_a, _label_b),
         "{}{}{}".format(_history_epoch_start, _history_epoch_freq, _save_epoch_freq))
     _his_label_dir = "../BASNetTemp/his/{}".format(_name_model)
 
@@ -797,13 +802,19 @@ if __name__ == '__main__':
     Tools.print(_his_label_dir)
     Tools.print()
 
+    sod_data = SODData(data_root_path="/media/ubuntu/4T/ALISURE/Data/SOD")
+    # sod_data = SODData(data_root_path="/media/ubuntu/ALISURE-SSD/data/SOD")
+    all_image, all_mask, all_dataset_name = sod_data.get_all_train_and_mask() if _is_all_data else sod_data.duts_tr()
+
     bas_runner = BASRunner(batch_size=_batch_size, size_train=_size_train, size_test=_size_test,
                            cam_label_dir=_cam_label_dir, cam_label_name=_cam_label_name, his_label_dir=_his_label_dir,
                            label_a=_label_a, label_b=_label_b, has_crf=_has_crf,
-                           data_dir="/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-TR",
+                           tra_img_name_list=all_image, tra_lbl_name_list=all_mask,
+                           tra_data_name_list=all_dataset_name,
                            model_dir="../BASNetTemp/saved_models/{}".format(_name_model))
 
-    bas_runner.load_model(model_file_name="../BASNetTemp/saved_models/CAM_123_224_256/930_train_1.172.pth")
+    # bas_runner.load_model(model_file_name="../BASNetTemp/saved_models/CAM_123_224_256/930_train_1.172.pth")
+    bas_runner.load_model(model_file_name="../BASNetTemp/saved_models/CAM_123_224_256_DTrue/1000_train_1.072.pth")
     bas_runner.train(epoch_num=30, start_epoch=0, history_epoch_start=_history_epoch_start,
                      history_epoch_freq=_history_epoch_freq, is_supervised=_is_supervised, has_history=_has_history)
 

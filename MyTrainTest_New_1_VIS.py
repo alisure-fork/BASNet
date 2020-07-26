@@ -391,9 +391,10 @@ class MICProduceClass(object):
 
 class BASNet(nn.Module):
 
-    def __init__(self, n_channels, is_weight_sum=False, clustering_num_list=None):
+    def __init__(self, n_channels, is_weight_sum=False, is_train=False, clustering_num_list=None):
         super(BASNet, self).__init__()
         self.is_weight_sum = is_weight_sum
+        self.is_train = is_train
 
         resnet = models.resnet18(pretrained=False)
 
@@ -461,26 +462,33 @@ class BASNet(nn.Module):
         return_m = {"m1": return_m1, "m2": return_m2, "m3": return_m3}
 
         # -------------Label-------------
-        cam_1 = self.cluster_activation_map(smc_logits_1, mic_1)  # 簇激活图：Cluster Activation Map
-        cam_1_up = self._up_to_target(cam_1, x_for_up)
-        cam_1_up_norm = self._feature_norm(cam_1_up)
+        return_l = None
+        if not self.is_train:
+            cam_1 = self.cluster_activation_map(smc_logits_1, mic_1)  # 簇激活图：Cluster Activation Map
+            cam_1_up = self._up_to_target(cam_1, x_for_up)
+            cam_1_up_norm = self._feature_norm(cam_1_up)
 
-        cam_2 = self.cluster_activation_map(smc_logits_2, mic_2)  # 簇激活图：Cluster Activation Map
-        cam_2_up = self._up_to_target(cam_2, cam_1_up)
-        cam_2_up_norm = self._feature_norm(cam_2_up)
+            cam_2 = self.cluster_activation_map(smc_logits_2, mic_2)  # 簇激活图：Cluster Activation Map
+            cam_2_up = self._up_to_target(cam_2, cam_1_up)
+            cam_2_up_norm = self._feature_norm(cam_2_up)
 
-        cam_3 = self.cluster_activation_map(smc_logits_3, mic_3)  # 簇激活图：Cluster Activation Map
-        cam_3_up = self._up_to_target(cam_3, cam_1_up)
-        cam_3_up_norm = self._feature_norm(cam_3_up)
+            cam_3 = self.cluster_activation_map(smc_logits_3, mic_3)  # 簇激活图：Cluster Activation Map
+            cam_3_up = self._up_to_target(cam_3, cam_1_up)
+            cam_3_up_norm = self._feature_norm(cam_3_up)
 
-        cam_up_norm_123 = (cam_1_up_norm + cam_2_up_norm + cam_3_up_norm) / 3
-        cam_up_norm_12 = (cam_1_up_norm + cam_2_up_norm) / 2
-        cam_up_norm_13 = (cam_1_up_norm + cam_3_up_norm) / 2
-        cam_up_norm_23 = (cam_2_up_norm + cam_3_up_norm) / 2
+            cam_up_norm_123 = (cam_1_up_norm + cam_2_up_norm + cam_3_up_norm) / 3
+            cam_up_norm_12 = (cam_1_up_norm + cam_2_up_norm) / 2
+            cam_up_norm_13 = (cam_1_up_norm + cam_3_up_norm) / 2
+            cam_up_norm_23 = (cam_2_up_norm + cam_3_up_norm) / 2
 
-        return_l = {"cam_up_norm_C123": cam_up_norm_123, "cam_up_norm_C12": cam_up_norm_12,
-                    "cam_up_norm_C13": cam_up_norm_13, "cam_up_norm_C23": cam_up_norm_23,
-                    "cam_1_up_norm": cam_1_up_norm, "cam_2_up_norm": cam_2_up_norm, "cam_3_up_norm": cam_3_up_norm}
+            # return_l = {"cam_up_norm_C123": cam_up_norm_123, "cam_up_norm_C12": cam_up_norm_12,
+            #             "cam_up_norm_C13": cam_up_norm_13, "cam_up_norm_C23": cam_up_norm_23,
+            #             "cam_1_up_norm": cam_1_up_norm, "cam_2_up_norm": cam_2_up_norm,
+            #             "cam_3_up_norm": cam_3_up_norm}
+            return_l = {"cam_up_norm_C123": cam_up_norm_123,
+                        "cam_up_norm_C12": cam_up_norm_12,
+                        "cam_up_norm_C23": cam_up_norm_23}
+            pass
 
         return return_m, return_l
 
@@ -554,7 +562,7 @@ class BASRunner(object):
         self.data_batch_num = len(self.data_loader_sod)
 
         # Model
-        self.net = BASNet(3, is_weight_sum=is_weight_sum,
+        self.net = BASNet(3, is_weight_sum=is_weight_sum, is_train=self.is_train,
                           clustering_num_list=[clustering_num_1, clustering_num_2, clustering_num_3])
         if torch.cuda.is_available():
             self.net = nn.DataParallel(self.net).cuda()
@@ -778,10 +786,16 @@ class BASRunner(object):
 
     @staticmethod
     def eval_vis(img_name_list, lbl_name_list, data_name_list,
-                 vis_label_dir, vis_label_name, size_eval=None, th_num=100, beta_2=0.3):
-        lbl2_name_list = [os.path.join(vis_label_dir, '{}_{}_{}.bmp'.format(
-            data_name, os.path.splitext(os.path.basename(img_path))[0], vis_label_name)
-                                       ) for img_path, data_name in zip(img_name_list, data_name_list)]
+                 vis_label_dir, vis_label_name, size_eval=None, th_num=100, beta_2=0.3, has_data_name=True):
+        if has_data_name:
+            lbl2_name_list = [os.path.join(vis_label_dir, '{}_{}_{}.bmp'.format(
+                data_name, os.path.splitext(os.path.basename(img_path))[0], vis_label_name)
+                                           ) for img_path, data_name in zip(img_name_list, data_name_list)]
+        else:
+            lbl2_name_list = [os.path.join(vis_label_dir, '{}_{}.bmp'.format(
+                 os.path.splitext(os.path.basename(img_path))[0], vis_label_name)
+                                           ) for img_path, data_name in zip(img_name_list, data_name_list)]
+            pass
 
         eval_cam = EvalCAM(lbl_name_list, lbl2_name_list, size_eval=size_eval, th_num=th_num)
 
@@ -821,6 +835,16 @@ class BASRunner(object):
 2020-07-14 13:47:55 Train avg mae=0.17801150496007748 score=0.6452717806037506
 2020-07-14 13:41:42 ../BASNetTemp/cam/CAM_123_224_256_AVG_30 cam_up_norm_C123_crf
 2020-07-14 13:47:43 Train avg mae=0.17759568890576982 score=0.6455211460931307
+
+2020-07-26 08:17:53 [E:999/1000] loss:1.072 mic1:0.444 mic2:0.332 mic3:0.296 sod:0.000
+2020-07-26 08:17:53 Train: [999] 1-7135/2175
+2020-07-26 08:17:53 Train: [999] 2-6100/2297
+2020-07-26 08:17:53 Train: [999] 3-5929/2481
+2020-07-26 08:17:54 Save Model to ../BASNetTemp/saved_models/CAM_123_224_256_DTrue/1000_train_1.072.pth
+
+
+2020-07-27 00:08:22 ../BASNetTemp/cam/CAM_123_224_256_A5_SFalse_DTrue cam_up_norm_C23_crf
+2020-07-27 00:11:17 Train avg mae=0.15425343497672997 score=0.29836294297909255
 """
 
 """
@@ -834,8 +858,8 @@ class BASRunner(object):
 
 if __name__ == '__main__':
     _is_all_data = True
-    _is_train = True
-    _is_eval = False
+    _is_train = False
+    _is_eval = True
 
     os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3" if _is_train else "0"
     _batch_size = 16 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
@@ -843,22 +867,29 @@ if __name__ == '__main__':
     _is_weight_sum = False
     _size_train = 224
     _size_vis = 256
-    _multi_num = 1
+    _multi_num = 5
     _name_model = "CAM_123_{}_{}_D{}".format(_size_train, _size_vis, _is_all_data)
     _name_cam = "CAM_123_{}_{}_A{}_S{}_D{}".format(_size_train, _size_vis, _multi_num, _is_weight_sum, _is_all_data)
 
     sod_data = SODData(data_root_path="/media/ubuntu/4T/ALISURE/Data/SOD")
+    # sod_data = SODData(data_root_path="/media/ubuntu/ALISURE-SSD/data/SOD")
     all_image, all_mask, all_dataset_name = sod_data.get_all_train_and_mask() if _is_all_data else sod_data.duts_tr()
 
     if _is_eval:
-        _tra_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_1"
+        # _tra_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_1"
         # _tra_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_9"
         # _tra_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_30"
-        _tra_label_name = 'cam_up_norm_C123_crf'
+        # _tra_label_name = 'cam_up_norm_C123_crf'
+
+        _tra_label_dir = "../BASNetTemp/cam/CAM_123_224_256_A1_SFalse_DTrue"
+        # _tra_label_dir = "../BASNetTemp/cam/CAM_123_224_256_A5_SFalse_DTrue"
+        _tra_label_name = 'cam_up_norm_C23_crf'
 
         Tools.print("{} {}".format(_tra_label_dir, _tra_label_name))
-        _image_list, _mask_list, _dataset_list = sod_data.duts_te()
-        BASRunner.eval_vis(_image_list, _mask_list, _dataset_list, _tra_label_dir, _tra_label_name, size_eval=_size_vis)
+        _image_list, _mask_list, _dataset_list = sod_data.duts_tr()
+        _has_data_name = True
+        BASRunner.eval_vis(_image_list, _mask_list, _dataset_list,
+                           _tra_label_dir, _tra_label_name, size_eval=_size_vis, has_data_name=_has_data_name)
     else:
         bas_runner = BASRunner(batch_size=_batch_size, multi_num=_multi_num, is_weight_sum=_is_weight_sum,
                                size_train=_size_train, size_vis=_size_vis, is_train=_is_train,
@@ -870,7 +901,9 @@ if __name__ == '__main__':
         if _is_train:  # 训练
             bas_runner.train(epoch_num=1000, start_epoch=0)
         else:  # 得到响应图
-            bas_runner.load_model(model_file_name="../BASNetTemp/saved_models/CAM_123_224_256/930_train_1.172.pth")
+            # bas_runner.load_model(model_file_name="../BASNetTemp/saved_models/CAM_123_224_256/930_train_1.172.pth")
+            bas_runner.load_model(
+                model_file_name="../BASNetTemp/saved_models/CAM_123_224_256_DTrue/1000_train_1.072.pth")
             bas_runner.vis()
             pass
         pass
