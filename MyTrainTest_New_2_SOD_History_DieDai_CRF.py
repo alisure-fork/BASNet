@@ -767,15 +767,16 @@ if __name__ == '__main__':
     # _size_train, _size_test = 320, 320
     # _batch_size = 8 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
 
-    _is_all_data = True
+    _is_all_data = False
     _is_supervised = False
     _has_history = True
     _history_epoch_start, _history_epoch_freq, _save_epoch_freq = 4, 1, 1
 
+    ####################################################################################################
     # _label_a, _label_b, _has_crf = 0.2, 0.5, False  # OK
     # _label_a, _label_b, _has_crf = 0.2, 0.5, True  # OK
     # _label_a, _label_b, _has_crf = 0.3, 0.5, False  # OK
-    _label_a, _label_b, _has_crf = 0.3, 0.5, True  # OK OK large 0.612, 0.856
+    # _label_a, _label_b, _has_crf = 0.3, 0.5, True  # OK OK large 0.612, 0.856
     # _label_a, _label_b, _has_crf = 0.4, 0.6, False  # OK
     # _label_a, _label_b, _has_crf = 0.4, 0.6, True
 
@@ -783,10 +784,13 @@ if __name__ == '__main__':
     # _cam_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_9"
     # _cam_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_30"
     # _cam_label_name = 'cam_up_norm_C123_crf'
+    ####################################################################################################
 
-    _cam_label_dir = "CAM_123_224_256_A1_SFalse_DTrue"
-    # _cam_label_dir = "CAM_123_224_256_A5_SFalse_DTrue"
-    _cam_label_name = 'cam_up_norm_C123_crf'
+    ####################################################################################################
+    _label_a, _label_b, _has_crf = 0.3, 0.5, True
+    _cam_label_dir = "CAM_123_224_256_A5_SFalse_DFalse"
+    _cam_label_name = 'cam_up_norm_C23_crf'
+    ####################################################################################################
 
     _name_model = "{}_{}_{}{}{}{}_DieDai{}_{}_{}".format(
         _cam_label_dir, _size_train, _size_test, "_{}".format(_cam_label_name),
@@ -803,8 +807,7 @@ if __name__ == '__main__':
     Tools.print()
 
     sod_data = SODData(data_root_path="/media/ubuntu/4T/ALISURE/Data/SOD")
-    # sod_data = SODData(data_root_path="/media/ubuntu/ALISURE-SSD/data/SOD")
-    all_image, all_mask, all_dataset_name = sod_data.get_all_train_and_mask() if _is_all_data else sod_data.duts_tr()
+    all_image, all_mask, all_dataset_name = sod_data.get_all_train_and_mask() if _is_all_data else sod_data.duts()
 
     bas_runner = BASRunner(batch_size=_batch_size, size_train=_size_train, size_test=_size_test,
                            cam_label_dir=_cam_label_dir, cam_label_name=_cam_label_name, his_label_dir=_his_label_dir,
@@ -814,7 +817,8 @@ if __name__ == '__main__':
                            model_dir="../BASNetTemp/saved_models/{}".format(_name_model))
 
     # bas_runner.load_model(model_file_name="../BASNetTemp/saved_models/CAM_123_224_256/930_train_1.172.pth")
-    bas_runner.load_model(model_file_name="../BASNetTemp/saved_models/CAM_123_224_256_DTrue/1000_train_1.072.pth")
+    # bas_runner.load_model(model_file_name="../BASNetTemp/saved_models/CAM_123_224_256_DTrue/1000_train_1.072.pth")
+    bas_runner.load_model(model_file_name="../BASNetTemp/saved_models/CAM_123_224_256_DFalse/1000_train_1.154.pth")
     bas_runner.train(epoch_num=30, start_epoch=0, history_epoch_start=_history_epoch_start,
                      history_epoch_freq=_history_epoch_freq, is_supervised=_is_supervised, has_history=_has_history)
 

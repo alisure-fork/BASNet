@@ -248,6 +248,11 @@ class SODData(object):
         dataset_name_list = ["Judd" for _ in image_list]
         return image_list, mask_list, dataset_name_list
 
+    def duts(self):
+        image_list1, mask_list1, dataset_name_list1 = self.duts_te()
+        image_list2, mask_list2, dataset_name_list2 = self.duts_tr()
+        return image_list1 + image_list2, image_list1 + image_list2, dataset_name_list1 + dataset_name_list2
+
     # DUTS-TE: 5019
     def duts_te(self, image_path="./DUTS/DUTS-TE/DUTS-TE-Image", mask_path="./DUTS/DUTS-TE/DUTS-TE-Mask"):
         image_list, mask_list = self._sod_data_file_list(
