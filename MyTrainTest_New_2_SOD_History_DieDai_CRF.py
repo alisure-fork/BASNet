@@ -251,6 +251,9 @@ class DatasetUSOD(Dataset):
                     # 3_CAM_123_224_256_A5_SFalse_DFalse_224_256_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211
                     # 2020-07-31 01:49:29 Test 25 avg mae=0.10260867692884945 score=0.6635717556328401
                     # 2020-07-31 01:51:53 Train 25 avg mae=0.07822179247371175 score=0.8719296754140803
+                    # 3_Train_CAM_123_224_256_A5_SFalse_DFalse_224_256_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211
+                    # 2020-08-01 01:53:37 Test 19 avg mae=0.12364826592661085 score=0.6500030378019388
+                    # 2020-08-01 01:57:01 Train 19 avg mae=0.07913025547326966 score=0.87052791449969
                     ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
                     ann = (0.75 * ann + 0.25 * ann_label)
 

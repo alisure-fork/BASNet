@@ -27,8 +27,8 @@ class CRFTool(object):
 
     @staticmethod
     def _get_k1_k2(img, black_th=0.25, white_th=0.75, ratio_th=16):
-        black = np.count_nonzero(img < black_th)
-        white = np.count_nonzero(img > white_th)
+        black = np.count_nonzero(img < black_th) + 1
+        white = np.count_nonzero(img > white_th) + 1
         ratio = black / white
         if ratio > 1:  # 物体小
             ratio = int(ratio)
@@ -238,34 +238,58 @@ class DatasetUSOD(Dataset):
                 img = np.asarray(Image.open(img_name).convert("RGB"))  # 图像
                 ann = np.asarray(Image.open(save_lbl_name).convert("L")) / 255  # 训练的输出
                 if self.has_crf:
-                    # 3
                     # 0.0001
                     # 2_CAM_123_224_256_A5_SFalse_DFalse_224_256_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211
                     # 2020-07-31 01:21:26 Test 29 avg mae=0.10352051467412994 score=0.6654844658526717
                     # 2020-07-31 01:24:02 Train 29 avg mae=0.07711194122040814 score=0.8706896792050232
-                    if epoch <= 12:
+                    # ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
+                    # ann = (0.75 * ann + 0.25 * ann_label)
+
+                    # 不确定区域; 对不确定区域进行CRF; 修改不确定区域
+                    # 1_Morphology_Train_CAM_123_224_256_A5_SFalse_DFalse_224_256_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211
+                    # 2020-08-01 13:09:27 Test 27 avg mae=0.11535412584032331 score=0.648697955898359
+                    # 2020-08-01 13:11:38 Train 27 avg mae=0.07713918824764815 score=0.8691519831500819
+                    # if epoch <= 10:
+                    #     ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
+                    #     ann = (0.75 * ann + 0.25 * ann_label)
+                    # else:
+                    #     ann, change = CRFTool.get_uncertain_area(ann, black_th=self.label_a,
+                    #                                              white_th=self.label_b, ratio_th=16)
+                    #     ann2 = CRFTool.crf_label(img, np.expand_dims(ann, axis=0), a=self.label_a, b=self.label_b)
+                    #     ann[change] = ann2[change]
+                    #     pass
+
+                    # 2_Morphology_Train_CAM_123_224_256_A5_SFalse_DFalse_224_256_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211
+                    # 2020-08-01 22:47:48 Test 25 avg mae=0.12813315100613096 score=0.6673295398451972
+                    # 2020-08-01 22:49:49 Train 25 avg mae=0.08134926897896962 score=0.872017064360255
+                    # if epoch <= 10:
+                    #     ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
+                    #     ann = (0.75 * ann + 0.25 * ann_label)
+                    # else:
+                    #     ann, change = CRFTool.get_uncertain_area(ann, black_th=self.label_a,
+                    #                                              white_th=self.label_b, ratio_th=10)
+                    #     ann2 = CRFTool.crf_label(img, np.expand_dims(ann, axis=0), a=self.label_a, b=self.label_b)
+                    #     ann[change] = ann2[change]
+
+                    # 3_Morphology_Train_CAM_123_224_256_A5_SFalse_DFalse_224_256_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211
+                    # 2020-08-02 01:38:45 Test 15 avg mae=0.1323865410827455 score=0.6618741786757457
+                    # 2020-08-02 01:40:51 Train 15 avg mae=0.08220166247338057 score=0.8720659252577703
+                    # if epoch <= 2:
+                    #     ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
+                    #     ann = (0.75 * ann + 0.25 * ann_label)
+                    # else:
+                    #     ann, change = CRFTool.get_uncertain_area(ann, black_th=self.label_a,
+                    #                                              white_th=self.label_b, ratio_th=10)
+                    #     ann2 = CRFTool.crf_label(img, np.expand_dims(ann, axis=0), a=self.label_a, b=self.label_b)
+                    #     ann[change] = ann2[change]
+
+                    # 4_Morphology_Train_CAM_123_224_256_A5_SFalse_DFalse_224_256_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211
+                    if epoch <= 2:
                         ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
                         ann = (0.75 * ann + 0.25 * ann_label)
                     else:
-                        # if pool_id == 31:
-                        #     Image.fromarray(np.asarray(img, dtype=np.uint8)).show()
-                        #     Image.fromarray(np.asarray(ann * 255, dtype=np.uint8)).show()
-
-                        # 不确定区域
-                        ann, change = CRFTool.get_uncertain_area(ann, black_th=self.label_a, white_th=self.label_b)
-
-                        # if pool_id == 31:
-                        #     Image.fromarray(np.asarray(ann * 255, dtype=np.uint8)).show()
-                        #     Image.fromarray(np.asarray(change * 255, dtype=np.uint8)).show()
-
-                        # 对不确定区域进行CRF
-                        ann2 = CRFTool.crf_label(img, np.expand_dims(ann, axis=0), a=self.label_a, b=self.label_b)
-                        # 修改不确定区域
-                        ann[change] = ann2[change]
-
-                        # if pool_id == 31:
-                        #     Image.fromarray(np.asarray(ann2 * 255, dtype=np.uint8)).show()
-                        #     Image.fromarray(np.asarray(ann * 255, dtype=np.uint8)).show()
+                        ann, change = CRFTool.get_uncertain_area(ann, black_th=self.label_a,
+                                                                 white_th=self.label_b, ratio_th=40)
                     pass
 
                 imsave(Tools.new_dir(train_lbl_name), np.asarray(ann * 255, dtype=np.uint8), check_contrast=False)
@@ -533,7 +557,6 @@ class BASRunner(object):
             Tools.print('Epoch:{:03d}, lr={:.5f}'.format(epoch, self.optimizer.param_groups[0]['lr']))
 
             ###########################################################################
-            # self.dataset_sod.crf_dir(epoch=11)
             # 0 准备
             if epoch == 0:  # 0
                 self.dataset_sod.set_label(is_supervised=is_supervised, cam_for_train=True)
@@ -684,10 +707,16 @@ class BASRunner(object):
 # 4 Main
 
 
+"""
+2020-07-13 00:11:42  Test  64 avg mae=0.06687459443943410 score=0.8030195696294923
+2020-07-13 09:57:32 Train 190 avg mae=0.02006155672962919 score=0.9667652002840796
+"""
+
+
 if __name__ == '__main__':
-    # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
     # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1"
-    os.environ["CUDA_VISIBLE_DEVICES"] = "2, 3"
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "2, 3"
 
     _size_train, _size_test = 224, 256
     _batch_size = 12 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
@@ -705,13 +734,12 @@ if __name__ == '__main__':
     # _history_epoch_start, _history_epoch_freq, _save_epoch_freq = 2, 2, 2
     _label_a, _label_b, _has_crf = 0.3, 0.5, True
 
-    _learning_rate = [[0, 0.0001], [20, 0.00001]]
-    # _learning_rate = [[0, 0.001], [20, 0.0001]]
+    _learning_rate = [[0, 0.0001], [20, 0.0001]]
     _cam_label_dir = "../BASNetTemp/cam/CAM_123_224_256_A5_SFalse_DFalse"
     _cam_label_name = 'cam_up_norm_C23_crf'
     ####################################################################################################
 
-    _name_model = "1_Morphology_{}_{}_{}{}{}{}_DieDai{}_{}_{}".format(
+    _name_model = "4_Morphology_Train_{}_{}_{}{}{}{}_DieDai{}_{}_{}".format(
         os.path.basename(_cam_label_dir), _size_train, _size_test, "_{}".format(_cam_label_name),
         "_Supervised" if _is_supervised else "", "_History" if _has_history else "",
         "_CRF" if _has_crf else "",  "{}_{}".format(_label_a, _label_b),
@@ -726,7 +754,7 @@ if __name__ == '__main__':
     Tools.print()
 
     sod_data = SODData(data_root_path="/media/ubuntu/4T/ALISURE/Data/SOD")
-    all_image, all_mask, all_dataset_name = sod_data.get_all_train_and_mask() if _is_all_data else sod_data.duts()
+    all_image, all_mask, all_dataset_name = sod_data.get_all_train_and_mask() if _is_all_data else sod_data.duts_tr()
 
     bas_runner = BASRunner(batch_size=_batch_size, size_train=_size_train, size_test=_size_test,
                            cam_label_dir=_cam_label_dir, cam_label_name=_cam_label_name, his_label_dir=_his_label_dir,
