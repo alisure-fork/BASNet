@@ -274,22 +274,15 @@ class DatasetUSOD(Dataset):
                     # 3_Morphology_Train_CAM_123_224_256_A5_SFalse_DFalse_224_256_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211
                     # 2020-08-02 01:38:45 Test 15 avg mae=0.1323865410827455 score=0.6618741786757457
                     # 2020-08-02 01:40:51 Train 15 avg mae=0.08220166247338057 score=0.8720659252577703
-                    # if epoch <= 2:
-                    #     ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
-                    #     ann = (0.75 * ann + 0.25 * ann_label)
-                    # else:
-                    #     ann, change = CRFTool.get_uncertain_area(ann, black_th=self.label_a,
-                    #                                              white_th=self.label_b, ratio_th=10)
-                    #     ann2 = CRFTool.crf_label(img, np.expand_dims(ann, axis=0), a=self.label_a, b=self.label_b)
-                    #     ann[change] = ann2[change]
-
-                    # 4_Morphology_Train_CAM_123_224_256_A5_SFalse_DFalse_224_256_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211
                     if epoch <= 2:
                         ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
                         ann = (0.75 * ann + 0.25 * ann_label)
                     else:
                         ann, change = CRFTool.get_uncertain_area(ann, black_th=self.label_a,
-                                                                 white_th=self.label_b, ratio_th=40)
+                                                                 white_th=self.label_b, ratio_th=10)
+                        ann2 = CRFTool.crf_label(img, np.expand_dims(ann, axis=0), a=self.label_a, b=self.label_b)
+                        ann[change] = ann2[change]
+
                     pass
 
                 imsave(Tools.new_dir(train_lbl_name), np.asarray(ann * 255, dtype=np.uint8), check_contrast=False)
