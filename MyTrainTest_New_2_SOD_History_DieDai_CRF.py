@@ -254,8 +254,8 @@ class DatasetUSOD(Dataset):
                     # 3_Train_CAM_123_224_256_A5_SFalse_DFalse_224_256_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211
                     # 2020-08-01 01:53:37 Test 19 avg mae=0.12364826592661085 score=0.6500030378019388
                     # 2020-08-01 01:57:01 Train 19 avg mae=0.07913025547326966 score=0.87052791449969
-                    ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
-                    ann = (0.75 * ann + 0.25 * ann_label)
+                    # ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
+                    # ann = (0.75 * ann + 0.25 * ann_label)
 
                     # 4  XXXX
                     # ann = (0.9 * lbl + 0.1 * ann) if lbl is not None else ann
@@ -281,6 +281,10 @@ class DatasetUSOD(Dataset):
                     # 2020-07-31 22:04:51 Train 13 avg mae=0.08358686457134105 score=0.8628368042132192
                     # ann_label = CRFTool.crf_label(img, np.expand_dims(ann, axis=0), a=self.label_a, b=self.label_b)
                     # ann = (0.75*(0.75*ann+0.25*ann_label)+0.25*lbl) if lbl is not None else (0.75*ann+0.25*ann_label)
+
+                    # 7
+                    ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
+                    ann = (0.75 * (lbl if lbl is not None else ann) + 0.25 * ann_label)
                     pass
 
                 imsave(Tools.new_dir(train_lbl_name), np.asarray(ann * 255, dtype=np.uint8), check_contrast=False)
@@ -825,8 +829,8 @@ CAM_123_224_256_AVG_30 CAM_123_SOD_224_256_cam_up_norm_C123_crf
 
 if __name__ == '__main__':
     # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1"
-    # os.environ["CUDA_VISIBLE_DEVICES"] = "2, 3"
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "2, 3"
 
     _size_train, _size_test = 224, 256
     _batch_size = 12 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
@@ -859,13 +863,13 @@ if __name__ == '__main__':
     # _history_epoch_start, _history_epoch_freq, _save_epoch_freq = 2, 2, 2
     _label_a, _label_b, _has_crf = 0.3, 0.5, True
 
-    _learning_rate = [[0, 0.0001], [20, 0.00001]]
+    _learning_rate = [[0, 0.0001], [20, 0.0001]]
     # _learning_rate = [[0, 0.001], [20, 0.0001]]
     _cam_label_dir = "../BASNetTemp/cam/CAM_123_224_256_A5_SFalse_DFalse"
     _cam_label_name = 'cam_up_norm_C23_crf'
     ####################################################################################################
 
-    _name_model = "3_Train_{}_{}_{}{}{}{}_DieDai{}_{}_{}".format(
+    _name_model = "7_Train_{}_{}_{}{}{}{}_DieDai{}_{}_{}".format(
         os.path.basename(_cam_label_dir), _size_train, _size_test, "_{}".format(_cam_label_name),
         "_Supervised" if _is_supervised else "", "_History" if _has_history else "",
         "_CRF" if _has_crf else "",  "{}_{}".format(_label_a, _label_b),
