@@ -289,7 +289,9 @@ class DatasetUSOD(Dataset):
                     # ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
                     # ann = (0.75 * ann + 0.25 * ann_label)
 
-                    #
+                    # 2_Morphology_1x1_Train_CAM_123_224_256_A5_SFalse_DFalse_224_256_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211
+                    # 2020-08-03 05:37:21 Test 29 avg mae=0.11428307403056394 score=0.6610142036638369
+                    # 2020-08-03 05:39:43 Train 29 avg mae=0.08335240646688775 score=0.860781158393456
                     if epoch <= 10:
                         ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
                         ann = (0.75 * ann + 0.25 * ann_label)
