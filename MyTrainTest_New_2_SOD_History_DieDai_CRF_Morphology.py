@@ -291,22 +291,35 @@ class DatasetUSOD(Dataset):
                     #     ann[change] = ann2[change]
 
                     # 4
-                    ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
-                    ratio3, lbl = 0, None
-                    if os.path.exists(train_lbl_name):
-                        lbl = np.asarray(Image.open(train_lbl_name).convert("L")) / 255  # 训练的标签
-                        ratio3 = CRFTool.get_ratio(lbl)
-                    ratio1 = CRFTool.get_ratio(ann)
-                    ratio2 = CRFTool.get_ratio(ann_label)
-                    if ratio1 > 0.1 and ratio2 > 0.1 and ratio3 > 0.1 and np.abs(ratio1 - ratio3) < 0.05 and \
-                            np.abs(ratio1 - ratio2) < 0.05 and np.abs(ratio2 - ratio3) < 0.05:
-                        ann = 0.5 * lbl + 0.5 * (0.5 * ann + 0.5 * ann_label)
+                    # ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
+                    # ratio3, lbl = 0, None
+                    # if os.path.exists(train_lbl_name):
+                    #     lbl = np.asarray(Image.open(train_lbl_name).convert("L")) / 255  # 训练的标签
+                    #     ratio3 = CRFTool.get_ratio(lbl)
+                    # ratio1 = CRFTool.get_ratio(ann)
+                    # ratio2 = CRFTool.get_ratio(ann_label)
+                    # if ratio1 > 0.1 and ratio2 > 0.1 and ratio3 > 0.1 and np.abs(ratio1 - ratio3) < 0.05 and \
+                    #         np.abs(ratio1 - ratio2) < 0.05 and np.abs(ratio2 - ratio3) < 0.05:
+                    #     ann = 0.5 * lbl + 0.5 * (0.5 * ann + 0.5 * ann_label)
+                    # else:
+                    #     if np.abs(ratio1 - ratio2) < 0.05:
+                    #         ann = 0.5 * ann + 0.5 * ann_label
+                    #     else:
+                    #         ann = 0.75 * ann + 0.25 * ann_label
+                    #     pass
+
+                    # 1_FLoss_Morphology_Train_CAM_123_224_256_A5_SFalse_DFalse_224_256_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211
+                    # loss=bce+0.1*f 31_train_0.058.pth
+                    # 2020-08-04 03:06:01 Test 31 avg mae=0.11399387341170084 score=0.6844463873396547
+                    # 2020-08-04 03:08:01 Test 31 avg mae=0.07444360389966856 score=0.8787626041157726
+                    if epoch <= 10:
+                        ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
+                        ann = (0.75 * ann + 0.25 * ann_label)
                     else:
-                        if np.abs(ratio1 - ratio2) < 0.05:
-                            ann = 0.5 * ann + 0.5 * ann_label
-                        else:
-                            ann = 0.75 * ann + 0.25 * ann_label
-                        pass
+                        ann, change = CRFTool.get_uncertain_area(ann, black_th=self.label_a,
+                                                                 white_th=self.label_b, ratio_th=10)
+                        ann2 = CRFTool.crf_label(img, np.expand_dims(ann, axis=0), a=self.label_a, b=self.label_b)
+                        ann[change] = ann2[change]
                     pass
 
                 imsave(Tools.new_dir(train_lbl_name), np.asarray(ann * 255, dtype=np.uint8), check_contrast=False)
@@ -559,6 +572,13 @@ class BASRunner(object):
 
     def all_loss_fusion(self, sod_output, sod_label, ignore_label=255.0):
         positions = sod_label.view(-1, 1) != ignore_label
+        loss = self.bce_loss(sod_output.view(-1, 1)[positions], sod_label.view(-1, 1)[positions])
+        if self.is_f_loss:
+            loss += 0.1 * self.f_loss(sod_output.view(-1, 1)[positions], sod_label.view(-1, 1)[positions])
+        return loss
+
+    def all_loss_fusion2(self, sod_output, sod_label, ignore_label=255.0):
+        positions = sod_label.view(-1, 1) != ignore_label
         if self.is_f_loss:
             loss_bce = self.f_loss(sod_output.view(-1, 1)[positions], sod_label.view(-1, 1)[positions])
         else:
@@ -772,12 +792,29 @@ pascal1500 256 2020-08-03 19:41:04 Test 0 avg mae=0.11016218768472368 score=0.78
 """
 
 
+"""
+# 4_Morphology_Train_CAM_123_224_256_A5_SFalse_DFalse_224_256_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211
+dut_dmron_5166 224 2020-08-04 10:08:22 Test 0 avg mae=0.10313339503826918 score=0.7132384089444648
+dut_dmron_5166 256 2020-08-04 10:06:34 Test 0 avg mae=0.12000880004079253 score=0.6890173272886477
+msra_b 224 2020-08-04 10:11:21 Test 0 avg mae=0.06599267166581371 score=0.8682642970379812
+msra_b 256 2020-08-04 10:11:47 Test 0 avg mae=0.07264809943824935 score=0.8624873855567591
+ecssd 224 2020-08-04 10:10:51 Test 0 avg mae=0.08852598902636341 score=0.8436103403429791
+ecssd 256 2020-08-04 10:11:02 Test 0 avg mae=0.0887865014817743 score=0.840789239269232
+sed2 224 2020-08-04 10:12:41 Test 0 avg mae=0.0961674050324493 score=0.8187090448876341
+sed2 256 2020-08-04 10:12:49 Test 0 avg mae=0.09640892098347346 score=0.8146683247114523
+pascal_s 224 2020-08-04 10:13:41 Test 0 avg mae=0.13196090760994966 score=0.7521595227964242
+pascal_s 256 2020-08-04 10:13:52 Test 0 avg mae=0.1364357251096779 score=0.7504093026380599
+pascal1500 224 2020-08-04 10:14:38 Test 0 avg mae=0.0985018917620182 score=0.7849576212854112
+pascal1500 256 2020-08-04 10:14:51 Test 0 avg mae=0.1028821981549263 score=0.7853842590230424
+"""
+
+
 if __name__ == '__main__':
     os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
     # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1"
     # os.environ["CUDA_VISIBLE_DEVICES"] = "2, 3"
 
-    _size_train, _size_test = 224, 224
+    _size_train, _size_test = 224, 256
     _batch_size = 12 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
 
     # _size_train, _size_test = 320, 320
@@ -786,7 +823,7 @@ if __name__ == '__main__':
     _is_all_data = False
     _is_supervised = False
     _has_history = True
-    _is_f_loss = False
+    _is_f_loss = True
 
     ####################################################################################################
     # _history_epoch_start, _history_epoch_freq, _save_epoch_freq = 2, 2, 2
@@ -794,12 +831,12 @@ if __name__ == '__main__':
     # _history_epoch_start, _history_epoch_freq, _save_epoch_freq = 2, 2, 2
     _label_a, _label_b, _has_crf = 0.3, 0.5, True
 
-    _learning_rate = [[0, 0.0001], [20, 0.0001]]
+    _learning_rate = [[0, 0.0001], [40, 0.0001]]
     _cam_label_dir = "../BASNetTemp/cam/CAM_123_224_256_A5_SFalse_DFalse"
     _cam_label_name = 'cam_up_norm_C23_crf'
     ####################################################################################################
 
-    _name_model = "4{}_Morphology_Train_{}_{}_{}{}{}{}_DieDai{}_{}_{}".format(
+    _name_model = "1{}_Morphology_Train_{}_{}_{}{}{}{}_DieDai{}_{}_{}".format(
         "_FLoss" if _is_f_loss else "", os.path.basename(_cam_label_dir), _size_train, _size_test,
         "_{}".format(_cam_label_name), "_Supervised" if _is_supervised else "", "_History" if _has_history else "",
         "_CRF" if _has_crf else "",  "{}_{}".format(_label_a, _label_b),
@@ -827,7 +864,7 @@ if __name__ == '__main__':
     # bas_runner.load_model(model_file_name="../BASNetTemp/saved_models/CAM_123_224_256/930_train_1.172.pth")
     # bas_runner.load_model(model_file_name="../BASNetTemp/saved_models/CAM_123_224_256_DTrue/1000_train_1.072.pth")
     bas_runner.load_model(model_file_name="../BASNetTemp/saved_models/CAM_123_224_256_DFalse/1000_train_1.154.pth")
-    bas_runner.train(epoch_num=30, start_epoch=0, history_epoch_start=_history_epoch_start,
+    bas_runner.train(epoch_num=50, start_epoch=0, history_epoch_start=_history_epoch_start,
                      history_epoch_freq=_history_epoch_freq, is_supervised=_is_supervised, has_history=_has_history)
 
     # EVAL
@@ -837,11 +874,11 @@ if __name__ == '__main__':
     #                 save_path="/media/ubuntu/4T/ALISURE/USOD/BASNetTemp/his/{}/test".format(_model_name))
 
     # EVAL
-    # _model_name = "2_Morphology_Train_CAM_123_224_256_A5_SFalse_DFalse_224_256_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211"
-    # _model_file = "25_train_0.057.pth"
+    # _model_name = "1_FLoss_Morphology_Train_CAM_123_224_256_A5_SFalse_DFalse_224_256_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211"
+    # _model_file = "31_train_0.058.pth"
     # bas_runner.load_model(model_file_name="../BASNetTemp/saved_models/{}/{}".format(_model_name, _model_file))
     # sod_data = SODData(data_root_path="/media/ubuntu/4T/ALISURE/Data/SOD")
-    # img_name_list, lbl_name_list, dataset_name_list = sod_data.dut_dmron_5166()
+    # img_name_list, lbl_name_list, dataset_name_list = sod_data.pascal1500()
     # bas_runner.eval_by_image_label(
     #     bas_runner.net, img_name_list, lbl_name_list, epoch=0, batch_size=_batch_size,
     #     size_test=_size_test, save_path="../BASNetTemp/eval/{}/{}/test".format(dataset_name_list[0], _model_name))
