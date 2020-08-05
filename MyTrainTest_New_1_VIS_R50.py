@@ -403,7 +403,6 @@ class BASNet(nn.Module):
             backbone = self.load_unsupervised_pre_train(backbone, unsupervised_pre_train_path)
         return_layers = {'relu': 'e0', 'layer1': 'e1', 'layer2': 'e2', 'layer3': 'e3', 'layer4': 'e4'}
         self.backbone = IntermediateLayerGetter(backbone, return_layers=return_layers)
-        self.change_channel = ConvBlock(2048, 512)
 
         # -------------MIC-------------
         self.clustering_num_list = list([256, 512]) if clustering_num_list is None else clustering_num_list
@@ -412,16 +411,14 @@ class BASNet(nn.Module):
         self.mic_pool = nn.MaxPool2d(2, 2, ceil_mode=True)
 
         # MIC 1
-        self.mic_1_b1 = resnet.BasicBlock(512, 512)  # 28 32 40
-        self.mic_1_b2 = resnet.BasicBlock(512, 512)
-        self.mic_1_b3 = resnet.BasicBlock(512, 512)
-        self.mic_1_c1 = ConvBlock(512, self.clustering_num_list[0], has_relu=True)
+        self.mic_1_c1 = ConvBlock(2048, 2048, has_relu=True)  # 28 32 40
+        self.mic_1_c2 = ConvBlock(2048, 2048, has_relu=True)
+        self.mic_1_l1 = nn.Linear(2048, self.clustering_num_list[0])
 
         # MIC 2
-        self.mic_2_b1 = resnet.BasicBlock(512, 512)  # 14 16 20
-        self.mic_2_b2 = resnet.BasicBlock(512, 512)
-        self.mic_2_b3 = resnet.BasicBlock(512, 512)
-        self.mic_2_c1 = ConvBlock(512, self.clustering_num_list[1], has_relu=True)
+        self.mic_2_c1 = ConvBlock(2048, 2048, has_relu=True)  # 14 16 20
+        self.mic_2_c2 = ConvBlock(2048, 2048, has_relu=True)
+        self.mic_2_l1 = nn.Linear(2048, self.clustering_num_list[1])
         pass
 
     def forward(self, x):
@@ -429,18 +426,21 @@ class BASNet(nn.Module):
 
         # -------------Encoder-------------
         feature = self.backbone(x)  # (64, 160), (256, 80), (512, 40), (1024, 40), (2048, 40)
-        e4 = self.change_channel(feature["e4"])  # (512, 40)
+        e4 = self.convert_5(feature["e4"])  # (512, 40)
+
         # -------------MIC-------------
         # 1
-        mic_1_feature = self.mic_1_b3(self.mic_1_b2(self.mic_1_b1(e4)))  # (512, 40)
-        mic_1 = self.mic_1_c1(mic_1_feature)  # (256, 40)
-        smc_logits_1, smc_l2norm_1 = self.salient_map_clustering(mic_1)
+        mic_1_feature = self.mic_1_c2(self.mic_1_c1(e4))  # (512, 40)
+        mic_1_1x1 = F.adaptive_avg_pool2d(mic_1_feature, output_size=(1, 1)).view((mic_1_feature.size()[0], -1))
+        smc_logits_1 = self.mic_1_l1(mic_1_1x1)
+        smc_l2norm_1 = self.mic_l2norm(smc_logits_1)
         return_m1 = {"smc_logits": smc_logits_1, "smc_l2norm": smc_l2norm_1}
 
         # 2
-        mic_2_feature = self.mic_2_b3(self.mic_2_b2(self.mic_2_b1(self.mic_pool(mic_1_feature))))  # (512, 20)
-        mic_2 = self.mic_2_c1(mic_2_feature)  # (512, 20)
-        smc_logits_2, smc_l2norm_2 = self.salient_map_clustering(mic_2)
+        mic_2_feature = self.mic_2_c2(self.mic_2_c1(self.mic_pool(mic_1_feature)))  # (512, 20)
+        mic_2_1x1 = F.adaptive_avg_pool2d(mic_2_feature, output_size=(1, 1)).view((mic_2_feature.size()[0], -1))
+        smc_logits_2 = self.mic_2_l1(mic_2_1x1)
+        smc_l2norm_2 = self.mic_l2norm(smc_logits_2)
         return_m2 = {"smc_logits": smc_logits_2, "smc_l2norm": smc_l2norm_2}
 
         return_m = {"m1": return_m1, "m2": return_m2}
@@ -448,32 +448,33 @@ class BASNet(nn.Module):
         # -------------Label-------------
         return_l = None
         if not self.is_train:
-            cam_1 = self.cluster_activation_map(smc_logits_1, mic_1)  # 簇激活图：Cluster Activation Map
-            cam_1_up = self._up_to_target(cam_1, x_for_up)
-            cam_1_up_norm = self._feature_norm(cam_1_up)
+            cam_1 = self.cluster_activation_map(smc_logits_1, mic_1_feature, self.mic_1_l1.weight)  # 簇激活图
+            cam_1 = self._feature_norm(cam_1)
+            cam_1 = self._up_to_target(cam_1, x_for_up)
 
-            cam_2 = self.cluster_activation_map(smc_logits_2, mic_2)  # 簇激活图：Cluster Activation Map
-            cam_2_up = self._up_to_target(cam_2, cam_1_up)
-            cam_2_up_norm = self._feature_norm(cam_2_up)
+            cam_2 = self.cluster_activation_map(smc_logits_2, mic_2_feature, self.mic_2_l1.weight)  # 簇激活图
+            cam_2 = self._feature_norm(cam_2)
+            cam_2 = self._up_to_target(cam_2, cam_1)
 
-            cam_up_norm_12 = (cam_1_up_norm + cam_2_up_norm) / 2
-
-            return_l = {"cam_up_norm_C1": cam_1_up_norm, "cam_up_norm_C2": cam_2_up_norm,
-                        "cam_up_norm_C12": cam_up_norm_12}
+            cam_12 = (cam_1 + cam_2) / 2
+            return_l = {"cam_up_norm_C1": cam_1, "cam_up_norm_C2": cam_2, "cam_up_norm_C12": cam_12}
             pass
 
         return return_m, return_l
 
-    def salient_map_clustering(self, mic):
-        smc_logits = F.adaptive_avg_pool2d(mic, output_size=(1, 1)).view((mic.size()[0], -1))
-        smc_l2norm = self.mic_l2norm(smc_logits)
-        return smc_logits, smc_l2norm
-
     @staticmethod
-    def cluster_activation_map(smc_logits, mic_feature):
+    def cluster_activation_map(smc_logits, mic_feature, weight_softmax):
+        bz, nc, h, w = mic_feature.shape
+
+        cam_list = []
         top_k_value, top_k_index = torch.topk(smc_logits, 1, 1)
-        cam = torch.cat([mic_feature[i:i + 1, top_k_index[i], :, :] for i in range(mic_feature.size()[0])])
-        return cam
+        for i in range(mic_feature.size()[0]):
+            cam_weight = weight_softmax[top_k_index[i]]
+            cam = cam_weight.dot(mic_feature.reshape((nc, h * w)))
+            cam = cam.reshape(1, h, w)
+            cam_list.append(cam)
+            pass
+        return torch.cat(cam_list)
 
     @staticmethod
     def _up_to_target(source, target):
@@ -502,6 +503,7 @@ class BASNet(nn.Module):
             Tools.print("Error Load Unsupervised pre train from {}".format(pre_train_path))
             pass
         return model
+
     pass
 
 
