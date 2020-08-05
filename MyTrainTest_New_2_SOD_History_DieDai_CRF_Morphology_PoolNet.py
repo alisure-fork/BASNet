@@ -9,6 +9,7 @@ from PIL import Image
 from SODData import SODData
 import torch.optim as optim
 from skimage import morphology
+from torchvision import models
 import multiprocessing as multi_p
 import pydensecrf.densecrf as dcrf
 from torchvision import transforms
@@ -16,21 +17,17 @@ from alisuretool.Tools import Tools
 import torch.backends.cudnn as cudnn
 from skimage.io import imread, imsave
 from torch.utils.data import DataLoader, Dataset
-from torchvision.models import resnet
-from torchvision.models._utils import IntermediateLayerGetter
+from torchvision.models.resnet import BasicBlock as ResBlock
 from pydensecrf.utils import unary_from_softmax, unary_from_labels
+import torchvision.utils as vutils
+from collections import OrderedDict
+from torch.autograd import Variable
+from torch.nn import utils, functional as F
 
 
 #######################################################################################################################
 # 0 CRF
 class CRFTool(object):
-
-    @staticmethod
-    def get_ratio(img, ratio_th=0.5):
-        black = np.count_nonzero(img < ratio_th) + 1
-        white = np.count_nonzero(img > ratio_th) + 1
-        ratio = white / (white + black)
-        return ratio
 
     @staticmethod
     def _get_k1_k2(img, black_th=0.25, white_th=0.75, ratio_th=16):
@@ -290,57 +287,9 @@ class DatasetUSOD(Dataset):
                     #     ann2 = CRFTool.crf_label(img, np.expand_dims(ann, axis=0), a=self.label_a, b=self.label_b)
                     #     ann[change] = ann2[change]
 
-                    # 4
-                    # ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
-                    # ratio3, lbl = 0, None
-                    # if os.path.exists(train_lbl_name):
-                    #     lbl = np.asarray(Image.open(train_lbl_name).convert("L")) / 255  # 训练的标签
-                    #     ratio3 = CRFTool.get_ratio(lbl)
-                    # ratio1 = CRFTool.get_ratio(ann)
-                    # ratio2 = CRFTool.get_ratio(ann_label)
-                    # if ratio1 > 0.1 and ratio2 > 0.1 and ratio3 > 0.1 and np.abs(ratio1 - ratio3) < 0.05 and \
-                    #         np.abs(ratio1 - ratio2) < 0.05 and np.abs(ratio2 - ratio3) < 0.05:
-                    #     ann = 0.5 * lbl + 0.5 * (0.5 * ann + 0.5 * ann_label)
-                    # else:
-                    #     if np.abs(ratio1 - ratio2) < 0.05:
-                    #         ann = 0.5 * ann + 0.5 * ann_label
-                    #     else:
-                    #         ann = 0.75 * ann + 0.25 * ann_label
-                    #     pass
-
-                    # 1_FLoss_Morphology_Train_CAM_123_224_256_A5_SFalse_DFalse_224_256_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211
-                    # loss=bce+0.1*f 31_train_0.058.pth
-                    # 2020-08-04 03:06:01 Test 31 avg mae=0.11399387341170084 score=0.6844463873396547
-                    # 2020-08-04 03:08:01 Test 31 avg mae=0.07444360389966856 score=0.8787626041157726
-
-                    # 1_FLoss_Morphology_Train_CAM_123_224_256_A5_SFalse_DFalse_320_320_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211
-                    # 23_train_0.065.pth
-                    # 2020-08-05 01:36:52 Test 23 avg mae=0.10584519406080625 score=0.6931652778949701
-                    # 2020-08-05 01:40:45 Test 23 avg mae=0.07252354135906154 score=0.8806913579074058
-                    # 3_FLoss_Morphology_Train_CAM_123_224_256_A5_SFalse_DFalse_320_320_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211
-                    # 29_train_0.062.pth
-                    # 2020-08-05 05:43:12 Test 29 avg mae=0.10267482305265915 score=0.7039479408676812
-                    # 2020-08-05 05:47:09 Test 29 avg mae=0.07275413212112405 score=0.882560829883874
-                    if epoch <= 10:
-                        ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
-                        ann = (0.75 * ann + 0.25 * ann_label)
-                    else:
-                        ann, change = CRFTool.get_uncertain_area(ann, black_th=self.label_a,
-                                                                 white_th=self.label_b, ratio_th=10)
-                        ann2 = CRFTool.crf_label(img, np.expand_dims(ann, axis=0), a=self.label_a, b=self.label_b)
-                        ann[change] = ann2[change]
-                        pass
-
-                    # 2_FLoss_Morphology_Train_CAM_123_224_256_A5_SFalse_DFalse_224_256_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211
-                    # 45_train_0.021.pth
-                    # 2020-08-04 17:00:15 Test 45 avg mae=0.10881691630042735 score=0.6741292126678432
-                    # 2020-08-04 17:03:43 Test 45 avg mae=0.07142853449860757 score=0.8794887318974295
-                    # 2_FLoss_Morphology_Train_CAM_123_224_256_A5_SFalse_DFalse_320_320_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211
-                    # 45_train_0.022.pth
-                    # 2020-08-04 20:45:27 Test 45 avg mae=0.0999465329797974 score=0.6952895536245347
-                    # 2020-08-04 20:49:32 Test 45 avg mae=0.0697628950389723 score=0.8812714221550307
-                    # ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
-                    # ann = (0.75 * ann + 0.25 * ann_label)
+                    # 1_PoolNet_Train_CAM_123_224_256_A5_SFalse_DFalse_224_256_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211
+                    ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
+                    ann = (0.75 * ann + 0.25 * ann_label)
                     pass
 
                 imsave(Tools.new_dir(train_lbl_name), np.asarray(ann * 255, dtype=np.uint8), check_contrast=False)
@@ -424,31 +373,24 @@ class DatasetEvalUSOD(Dataset):
 # 2 Model
 
 
-"""
-is_supervised_pre_train
-2020-08-05 17:29:57 Test 33 avg mae=0.04582420507388141 score=0.8697536064569166
-2020-08-05 17:32:57 Test 33 avg mae=0.010893938894679938 score=0.9843851488063832
+class ConvBNReLU(nn.Module):
 
-is_unsupervised_pre_train
-2020-08-05 18:28:53 Test 39 avg mae=0.0489034632394237 score=0.8598464423336043
-2020-08-05 18:31:45 Test 39 avg mae=0.013386835949495435 score=0.9809714979566246
-"""
-
-
-class ConvBlock(nn.Module):
-
-    def __init__(self, cin, cout, stride=1, has_relu=True):
-        super(ConvBlock, self).__init__()
+    def __init__(self, cin, cout, stride=1, ks=3, has_relu=True, has_bn=True, bias=True):
+        super().__init__()
         self.has_relu = has_relu
+        self.has_bn = has_bn
 
-        self.conv = nn.Conv2d(cin, cout, kernel_size=3, stride=stride, padding=1, bias=False)
-        self.bn = nn.BatchNorm2d(cout)
-        self.relu = nn.ReLU(inplace=True)
+        self.conv = nn.Conv2d(cin, cout, kernel_size=ks, stride=stride, padding=ks//2, bias=bias)
+        if self.has_bn:
+            self.bn = nn.BatchNorm2d(cout)
+        if self.has_relu:
+            self.relu = nn.ReLU(inplace=True)
         pass
 
     def forward(self, x):
         out = self.conv(x)
-        out = self.bn(out)
+        if self.has_bn:
+            out = self.bn(out)
         if self.has_relu:
             out = self.relu(out)
         return out
@@ -456,100 +398,98 @@ class ConvBlock(nn.Module):
     pass
 
 
+class DeepPoolLayer(nn.Module):
+
+    def __init__(self, k, k_out, is_not_last, has_bn=True):
+        super(DeepPoolLayer, self).__init__()
+        self.is_not_last = is_not_last
+
+        self.pool2 = nn.AvgPool2d(kernel_size=2, stride=2)
+        self.pool4 = nn.AvgPool2d(kernel_size=4, stride=4)
+        self.pool8 = nn.AvgPool2d(kernel_size=8, stride=8)
+        self.conv1 = ConvBNReLU(k, k, ks=3, stride=1, has_relu=False, has_bn=has_bn, bias=False)
+        self.conv2 = ConvBNReLU(k, k, ks=3, stride=1, has_relu=False, has_bn=has_bn, bias=False)
+        self.conv3 = ConvBNReLU(k, k, ks=3, stride=1, has_relu=False, has_bn=has_bn, bias=False)
+
+        self.conv_sum = ConvBNReLU(k, k_out, ks=3, stride=1, has_relu=False, has_bn=has_bn, bias=False)
+        if self.is_not_last:
+            self.conv_sum_c = ConvBNReLU(k_out, k_out, ks=3, stride=1, has_relu=False, has_bn=has_bn, bias=False)
+        self.relu = nn.ReLU()
+        pass
+
+    def forward(self, x, x2=None):
+        x_size = x.size()
+
+        y1 = self.conv1(self.pool2(x))
+        y2 = self.conv2(self.pool4(x))
+        y3 = self.conv3(self.pool8(x))
+        res = torch.add(x, F.interpolate(y1, x_size[2:], mode='bilinear', align_corners=True))
+        res = torch.add(res, F.interpolate(y2, x_size[2:], mode='bilinear', align_corners=True))
+        res = torch.add(res, F.interpolate(y3, x_size[2:], mode='bilinear', align_corners=True))
+        res = self.relu(res)
+        res = self.conv_sum(res)
+
+        if self.is_not_last:
+            res = F.interpolate(res, x2.size()[2:], mode='bilinear', align_corners=True)
+            res = self.conv_sum_c(torch.add(res, x2))
+        return res
+
+    pass
+
+
 class BASNet(nn.Module):
 
-    def __init__(self, is_supervised_pre_train=False,
-                 is_unsupervised_pre_train=True, unsupervised_pre_train_path="./pre_model/MoCov2.pth"):
+    def __init__(self, has_bn=True):
         super(BASNet, self).__init__()
 
-        # -------------Encoder--------------
-        backbone = resnet.__dict__["resnet50"](pretrained=is_supervised_pre_train,
-                                               replace_stride_with_dilation=[False, True, True])
-        if is_unsupervised_pre_train:
-            backbone = self.load_unsupervised_pre_train(backbone, unsupervised_pre_train_path)
-        return_layers = {'relu': 'e0', 'layer1': 'e1', 'layer2': 'e2', 'layer3': 'e3', 'layer4': 'e4'}
-        self.backbone = IntermediateLayerGetter(backbone, return_layers=return_layers)
+        resnet = models.resnet18(pretrained=False)
 
-        # Convert
-        self.convert_5 = ConvBlock(2048, 512)
-        self.convert_4 = ConvBlock(1024, 512)
-        self.convert_3 = ConvBlock(512, 256)
-        self.convert_2 = ConvBlock(256, 256)
-        self.convert_1 = ConvBlock(64, 128)
+        # -------------Encoder--------------
+        self.encoder0 = ConvBNReLU(3, 64, has_relu=True)  # 64 * 224 * 224
+        self.encoder1 = resnet.layer1  # 64 * 224 * 224
+        self.encoder2 = resnet.layer2  # 128 * 112 * 112
+        self.encoder3 = resnet.layer3  # 256 * 56 * 56
+        self.encoder4 = resnet.layer4  # 512 * 28 * 28
 
         # -------------Decoder-------------
-        self.decoder_1_b1 = resnet.BasicBlock(512, 512)  # 40
-        self.decoder_1_b2 = resnet.BasicBlock(512, 512)  # 40
-        self.decoder_1_c = ConvBlock(512, 512, has_relu=True)  # 40
-
-        self.decoder_2_b1 = resnet.BasicBlock(512, 512)  # 40
-        self.decoder_2_b2 = resnet.BasicBlock(512, 512)  # 40
-        self.decoder_2_c = ConvBlock(512, 256, has_relu=True)  # 40
-
-        self.decoder_3_b1 = resnet.BasicBlock(256, 256)  # 80
-        self.decoder_3_b2 = resnet.BasicBlock(256, 256)  # 80
-        self.decoder_3_c = ConvBlock(256, 256, has_relu=True)  # 80
-
-        self.decoder_4_b1 = resnet.BasicBlock(256, 256)  # 160
-        self.decoder_4_b2 = resnet.BasicBlock(256, 256)  # 160
-        self.decoder_4_c = ConvBlock(256, 128, has_relu=True)  # 160
-
-        self.decoder_5_b1 = resnet.BasicBlock(128, 128)  # 160
-        self.decoder_5_b2 = resnet.BasicBlock(128, 128)  # 160
-        self.decoder_5_out = nn.Conv2d(128, 1, 3, padding=1, bias=False)  # 160
+        # DEEP POOL
+        self.deep_pool3 = DeepPoolLayer(512, 256, True, has_bn=has_bn)
+        self.deep_pool2 = DeepPoolLayer(256, 128, True, has_bn=has_bn)
+        self.deep_pool1 = DeepPoolLayer(128, 128, False, has_bn=has_bn)
+        # ScoreLayer
+        self.score = nn.Conv2d(128, 1, 1, 1)
         pass
 
     def forward(self, x):
         # -------------Encoder-------------
-        feature = self.backbone(x)  # (64, 160), (256, 80), (512, 40), (1024, 40), (2048, 40)
-        e0 = self.convert_1(feature["e0"])  # 128
-        e1 = self.convert_2(feature["e1"])  # 256
-        e2 = self.convert_3(feature["e2"])  # 256
-        e3 = self.convert_4(feature["e3"])  # 512
-        e4 = self.convert_5(feature["e4"])  # 512
+        e0 = self.encoder0(x)  # 64 * 224 * 224
+        e1 = self.encoder1(e0)  # 64 * 224 * 224
+        e2 = self.encoder2(e1)  # 128 * 112 * 112
+        e3 = self.encoder3(e2)  # 256 * 56 * 56
+        e4 = self.encoder4(e3)  # 512 * 28 * 28
 
         # -------------Decoder-------------
-        d1 = self.decoder_1_b2(self.decoder_1_b1(e4))  # 512 * 40 * 40
-        d1_d2 = self._up_to_target(self.decoder_1_c(d1), e3) + e3  # 512 * 40 * 40
+        # DEEP POOL
+        merge = self.deep_pool3(e4, e3)  # A + F
+        merge = self.deep_pool2(merge, e2)  # A + F
+        merge = self.deep_pool1(merge)  # A
 
-        d2 = self.decoder_2_b2(self.decoder_2_b1(d1_d2))  # 512 * 21 * 21
-        d2_d3 = self._up_to_target(self.decoder_2_c(d2), e2) + e2  # 512 * 40 * 40
-
-        d3 = self.decoder_3_b2(self.decoder_3_b1(d2_d3))  # 256 * 40 * 40
-        d3_d4 = self._up_to_target(self.decoder_3_c(d3), e1) + e1  # 256 * 80 * 80
-
-        d4 = self.decoder_4_b2(self.decoder_4_b1(d3_d4))  # 256 * 80 * 80
-        d4_d5 = self._up_to_target(self.decoder_4_c(d4), e0) + e0  # 128 * 160 * 160
-
-        d5 = self.decoder_5_b2(self.decoder_5_b1(d4_d5))  # 128 * 160 * 160
-        d5_out = self.decoder_5_out(d5)  # 1 * 160 * 160
-        d5_out_sigmoid = torch.sigmoid(d5_out)  # 1 * 160 * 160  # 小输出
-        d5_out_up = self._up_to_target(d5_out, x)  # 1 * 320 * 320
-        d5_out_up_sigmoid = torch.sigmoid(d5_out_up)  # 1 * 320 * 320  # 大输出
-
-        return_result = {"out": d5_out, "out_sigmoid": d5_out_sigmoid,
-                         "out_up": d5_out_up, "out_up_sigmoid": d5_out_up_sigmoid}
+        # ScoreLayer
+        out = self.score(merge)
+        out_sigmoid = torch.sigmoid(out)  # 1 * 112 * 112  # 小输出
+        out_up = self._up_to_target(out, x)  # 1 * 224 * 224
+        out_up_sigmoid = torch.sigmoid(out_up)  # 1 * 224 * 224  # 大输出
+        return_result = {"out": out, "out_sigmoid": out_sigmoid,
+                         "out_up": out_up, "out_up_sigmoid": out_up_sigmoid}
         return return_result
 
     @staticmethod
     def _up_to_target(source, target):
         if source.size()[2] != target.size()[2] or source.size()[3] != target.size()[3]:
             source = torch.nn.functional.interpolate(
-                source, size=[target.size()[2], target.size()[3]], mode='bilinear', align_corners=False)
+                source, size=[target.size()[2], target.size()[3]], mode='bilinear', align_corners=True)
             pass
         return source
-
-    @staticmethod
-    def load_unsupervised_pre_train(model, pre_train_path, change_key="module.encoder."):
-        pre_train = torch.load(pre_train_path)["model"]
-        checkpoint = {key.replace(change_key, ""): pre_train[key] for key in pre_train.keys() if change_key in key}
-        result = model.load_state_dict(checkpoint, strict=False)
-        if len(result.unexpected_keys) == 0:
-            Tools.print("Success Load Unsupervised pre train from {}".format(pre_train_path))
-        else:
-            Tools.print("Error Load Unsupervised pre train from {}".format(pre_train_path))
-            pass
-        return model
 
     pass
 
@@ -560,15 +500,13 @@ class BASNet(nn.Module):
 
 class BASRunner(object):
 
-    def __init__(self, batch_size=8, size_train=224, size_test=256, is_f_loss=False,
-                 label_a=0.2, label_b=0.5, has_crf=True,
+    def __init__(self, batch_size=8, size_train=224, size_test=256, label_a=0.2, label_b=0.5, has_crf=True,
                  tra_img_name_list=None, tra_lbl_name_list=None, tra_data_name_list=None, learning_rate=None,
                  cam_label_dir="../BASNetTemp/cam/CAM_123_224_256", cam_label_name='cam_up_norm_C123',
                  his_label_dir="../BASNetTemp/his/CAM_123_224_256", model_dir="./saved_models/model"):
         self.batch_size = batch_size
         self.size_train = size_train
         self.size_test = size_test
-        self.is_f_loss = is_f_loss
 
         self.label_a = label_a
         self.label_b = label_b
@@ -635,28 +573,8 @@ class BASRunner(object):
 
     def all_loss_fusion(self, sod_output, sod_label, ignore_label=255.0):
         positions = sod_label.view(-1, 1) != ignore_label
-        loss = self.bce_loss(sod_output.view(-1, 1)[positions], sod_label.view(-1, 1)[positions])
-        if self.is_f_loss:
-            loss += 0.1 * self.f_loss(sod_output.view(-1, 1)[positions], sod_label.view(-1, 1)[positions])
-        return loss
-
-    def all_loss_fusion2(self, sod_output, sod_label, ignore_label=255.0):
-        positions = sod_label.view(-1, 1) != ignore_label
-        if self.is_f_loss:
-            loss_bce = self.f_loss(sod_output.view(-1, 1)[positions], sod_label.view(-1, 1)[positions])
-        else:
-            loss_bce = self.bce_loss(sod_output.view(-1, 1)[positions], sod_label.view(-1, 1)[positions])
+        loss_bce = self.bce_loss(sod_output.view(-1, 1)[positions], sod_label.view(-1, 1)[positions])
         return loss_bce
-
-    @staticmethod
-    def f_loss(sod_output, sod_label):
-        tp = torch.sum(sod_output * sod_label)
-        fp = torch.sum(sod_output * (1 - sod_label))
-        tn = torch.sum((1 - sod_output) * sod_label)
-        precision = tp / (tp + fp)
-        recall = tp / (tp + tn)
-        loss = 1 - (1 + 0.3) * (precision * recall) / (0.3 * precision + recall)
-        return loss
 
     def save_histories(self, histories, indexes):
         for history, index in zip(histories, indexes):
@@ -678,8 +596,7 @@ class BASRunner(object):
             elif epoch == history_epoch_start:  # 5
                 self.dataset_sod.set_label(is_supervised=is_supervised, cam_for_train=False)
 
-            if not is_supervised and epoch >= history_epoch_start and \
-                    (epoch - history_epoch_start) % history_epoch_freq == 0:  # 5, 10, 15
+            if epoch >= history_epoch_start and (epoch - history_epoch_start) % history_epoch_freq == 0:  # 5, 10, 15
                 self.dataset_sod.crf_dir(epoch)
             ###########################################################################
 
@@ -760,8 +677,8 @@ class BASRunner(object):
         Tools.print()
         pass
 
-    @classmethod
-    def eval(cls, net, epoch=0, is_test=True, size_test=256, batch_size=16, th_num=25, beta_2=0.3, save_path=None):
+    @staticmethod
+    def eval(net, epoch=0, is_test=True, size_test=256, batch_size=16, th_num=25, beta_2=0.3, save_path=None):
         which = "TE" if is_test else "TR"
         data_dir = '/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-{}'.format(which)
         image_dir, label_dir = 'DUTS-{}-Image'.format(which), 'DUTS-{}-Mask'.format(which)
@@ -770,21 +687,11 @@ class BASRunner(object):
         img_name_list = glob.glob(os.path.join(data_dir, image_dir, '*.jpg'))
         lbl_name_list = [os.path.join(data_dir, label_dir, '{}.png'.format(
             os.path.splitext(os.path.basename(img_path))[0])) for img_path in img_name_list]
-
-        # EVAL
-        cls.eval_by_image_label(net, img_name_list, lbl_name_list, epoch=epoch, size_test=size_test,
-                                batch_size=batch_size, th_num=th_num, beta_2=beta_2, save_path=save_path)
-        pass
-
-    @staticmethod
-    def eval_by_image_label(net, img_name_list, lbl_name_list,
-                            epoch=0, size_test=256, batch_size=16, th_num=25, beta_2=0.3, save_path=None):
-        # 数据
         save_lbl_name_list = [os.path.join(save_path, '{}.bmp'.format(
             os.path.splitext(os.path.basename(img_path))[0])) for img_path in img_name_list] if save_path else None
         dataset_eval_sod = DatasetEvalUSOD(img_name_list=img_name_list, save_lbl_name_list=save_lbl_name_list,
                                            lab_name_list=lbl_name_list, size_test=size_test)
-        data_loader_eval_sod = DataLoader(dataset_eval_sod, batch_size, shuffle=False, num_workers=4)
+        data_loader_eval_sod = DataLoader(dataset_eval_sod, batch_size, shuffle=False, num_workers=24)
 
         # 执行
         avg_mae = 0.0
@@ -800,7 +707,7 @@ class BASRunner(object):
                 now_label = labels.squeeze().data.numpy()
                 return_m = net(inputs)
 
-                now_pred = return_m["out_up_sigmoid"].squeeze(dim=1).cpu().data.numpy()
+                now_pred = return_m["out_up_sigmoid"].squeeze().cpu().data.numpy()
 
                 if save_path:
                     for history, index in zip(now_pred, indexes):
@@ -823,7 +730,7 @@ class BASRunner(object):
         avg_recall = avg_recall / len(data_loader_eval_sod)
         score = (1 + beta_2) * avg_prec * avg_recall / (beta_2 * avg_prec + avg_recall)
         score[score != score] = 0
-        Tools.print("Test {} avg mae={} score={}".format(epoch, avg_mae, score.max()))
+        Tools.print("{} {} avg mae={} score={}".format("Test" if is_test else "Train", epoch, avg_mae, score.max()))
         pass
 
     pass
@@ -833,37 +740,39 @@ class BASRunner(object):
 # 4 Main
 
 
+"""
+2020-07-13 00:11:42  Test  64 avg mae=0.06687459443943410 score=0.8030195696294923
+2020-07-13 09:57:32 Train 190 avg mae=0.02006155672962919 score=0.9667652002840796
+"""
+
+
 if __name__ == '__main__':
-    # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
     # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1"
-    os.environ["CUDA_VISIBLE_DEVICES"] = "2, 3"
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "2, 3"
 
-    # _size_train, _size_test = 224, 256
-    # _batch_size = 6 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
-
-    _size_train, _size_test = 320, 320
-    _batch_size = 6 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
+    _size_train, _size_test = 224, 256
+    _batch_size = 16 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
 
     _is_all_data = False
     _is_supervised = False
     _has_history = True
-    _is_f_loss = False
 
     ####################################################################################################
     _history_epoch_start, _history_epoch_freq, _save_epoch_freq = 2, 1, 1
     _label_a, _label_b, _has_crf = 0.3, 0.5, True
 
-    _learning_rate = [[0, 0.0001], [30, 0.00001]]
+    _learning_rate = [[0, 0.0001], [20, 0.0001]]
     _cam_label_dir = "../BASNetTemp/cam/CAM_123_224_256_A5_SFalse_DFalse"
     _cam_label_name = 'cam_up_norm_C23_crf'
     ####################################################################################################
 
-    _name_model = "R50_1{}_Morphology_Train_{}_{}_{}{}{}{}_DieDai{}_{}_{}".format(
-        "_FLoss" if _is_f_loss else "", os.path.basename(_cam_label_dir), _size_train, _size_test,
-        "_{}".format(_cam_label_name), "_Supervised" if _is_supervised else "", "_History" if _has_history else "",
+    _name_model = "1_PoolNet_Train_{}_{}_{}{}{}{}_DieDai{}_{}_{}".format(
+        os.path.basename(_cam_label_dir), _size_train, _size_test, "_{}".format(_cam_label_name),
+        "_Supervised" if _is_supervised else "", "_History" if _has_history else "",
         "_CRF" if _has_crf else "",  "{}_{}".format(_label_a, _label_b),
         "{}{}{}".format(_history_epoch_start, _history_epoch_freq, _save_epoch_freq))
-    _his_label_dir = "../BASNetTemp/R50_his/{}".format(_name_model)
+    _his_label_dir = "../BASNetTemp/his2/{}".format(_name_model)
 
     Tools.print()
     Tools.print(_name_model)
@@ -875,33 +784,21 @@ if __name__ == '__main__':
     sod_data = SODData(data_root_path="/media/ubuntu/4T/ALISURE/Data/SOD")
     all_image, all_mask, all_dataset_name = sod_data.get_all_train_and_mask() if _is_all_data else sod_data.duts_tr()
 
-    bas_runner = BASRunner(batch_size=_batch_size, size_train=_size_train, size_test=_size_test, is_f_loss=_is_f_loss,
+    bas_runner = BASRunner(batch_size=_batch_size, size_train=_size_train, size_test=_size_test,
                            cam_label_dir=_cam_label_dir, cam_label_name=_cam_label_name, his_label_dir=_his_label_dir,
                            label_a=_label_a, label_b=_label_b, has_crf=_has_crf,
                            tra_img_name_list=all_image, tra_lbl_name_list=all_mask,
                            tra_data_name_list=all_dataset_name, learning_rate=_learning_rate,
                            model_dir="../BASNetTemp/saved_models/{}".format(_name_model))
 
-    # TRAIN
     # bas_runner.load_model(model_file_name="../BASNetTemp/saved_models/CAM_123_224_256/930_train_1.172.pth")
     # bas_runner.load_model(model_file_name="../BASNetTemp/saved_models/CAM_123_224_256_DTrue/1000_train_1.072.pth")
-    # bas_runner.load_model(model_file_name="../BASNetTemp/saved_models/CAM_123_224_256_DFalse/1000_train_1.154.pth")
-    bas_runner.train(epoch_num=40, start_epoch=0, history_epoch_start=_history_epoch_start,
+    bas_runner.load_model(model_file_name="../BASNetTemp/saved_models/CAM_123_224_256_DFalse/1000_train_1.154.pth")
+    bas_runner.train(epoch_num=30, start_epoch=0, history_epoch_start=_history_epoch_start,
                      history_epoch_freq=_history_epoch_freq, is_supervised=_is_supervised, has_history=_has_history)
 
-    # EVAL
     # _model_name = "CAM_123_SOD_224_256_cam_up_norm_C123_crf_Filter_History_DieDai_CRF"
     # bas_runner.load_model(model_file_name="../BASNetTemp/saved_models/{}/30_train_0.011.pth".format(_model_name))
     # bas_runner.eval(bas_runner.net, epoch=0, is_test=True, batch_size=_batch_size, size_test=_size_test,
     #                 save_path="/media/ubuntu/4T/ALISURE/USOD/BASNetTemp/his/{}/test".format(_model_name))
-
-    # EVAL
-    # _model_name = "3_FLoss_Morphology_Train_CAM_123_224_256_A5_SFalse_DFalse_320_320_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211"
-    # _model_file = "29_train_0.062.pth"
-    # bas_runner.load_model(model_file_name="../BASNetTemp/saved_models/{}/{}".format(_model_name, _model_file))
-    # sod_data = SODData(data_root_path="/media/ubuntu/4T/ALISURE/Data/SOD")
-    # img_name_list, lbl_name_list, dataset_name_list = sod_data.duts_tr()
-    # bas_runner.eval_by_image_label(
-    #     bas_runner.net, img_name_list, lbl_name_list, epoch=0, batch_size=_batch_size,
-    #     size_test=_size_test, save_path="../BASNetTemp/eval/{}/{}/test".format(dataset_name_list[0], _model_name))
     pass

@@ -426,7 +426,7 @@ class BASNet(nn.Module):
 
         # -------------Encoder-------------
         feature = self.backbone(x)  # (64, 160), (256, 80), (512, 40), (1024, 40), (2048, 40)
-        e4 = self.convert_5(feature["e4"])  # (512, 40)
+        e4 = feature["e4"]  # (512, 40)
 
         # -------------MIC-------------
         # 1
@@ -560,7 +560,7 @@ class BASRunner(object):
         # Loss and optimizer
         self.bce_loss = nn.BCELoss().cuda()
         self.mic_loss = nn.CrossEntropyLoss().cuda()
-        self.optimizer = optim.Adam(self.net.parameters(), lr=0.001, betas=(0.9, 0.999), weight_decay=0)
+        self.optimizer = optim.Adam(self.net.parameters(), lr=0.00001, betas=(0.9, 0.999), weight_decay=0)
         pass
 
     def load_model(self, model_file_name):
@@ -851,14 +851,14 @@ if __name__ == '__main__':
     _is_train = True
     _is_eval = False
 
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3" if _is_train else "0"
-    _batch_size = 4 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1" if _is_train else "0"
+    _batch_size = 16 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
 
     _size_train = 224
     _size_vis = 256
     _multi_num = 5
-    _name_model = "R50_CAM_123_{}_{}_D{}".format(_size_train, _size_vis, _is_all_data)
-    _name_cam = "R50_CAM_123_{}_{}_A{}_D{}".format(_size_train, _size_vis, _multi_num, _is_all_data)
+    _name_model = "R50_CAM_12_{}_{}_D{}".format(_size_train, _size_vis, _is_all_data)
+    _name_cam = "R50_CAM_12_{}_{}_A{}_D{}".format(_size_train, _size_vis, _multi_num, _is_all_data)
 
     sod_data = SODData(data_root_path="/media/ubuntu/4T/ALISURE/Data/SOD")
     all_image, all_mask, all_dataset_name = sod_data.get_all_train_and_mask() if _is_all_data else sod_data.duts_tr()
