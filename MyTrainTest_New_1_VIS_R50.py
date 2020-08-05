@@ -495,9 +495,13 @@ class BASNet(nn.Module):
     def load_unsupervised_pre_train(model, pre_train_path, change_key="module.encoder."):
         pre_train = torch.load(pre_train_path)["model"]
         checkpoint = {key.replace(change_key, ""): pre_train[key] for key in pre_train.keys() if change_key in key}
-        model.load_state_dict(checkpoint, strict=False)
+        result = model.load_state_dict(checkpoint, strict=False)
+        if len(result.unexpected_keys) == 0:
+            Tools.print("Success Load Unsupervised pre train from {}".format(pre_train_path))
+        else:
+            Tools.print("Error Load Unsupervised pre train from {}".format(pre_train_path))
+            pass
         return model
-
     pass
 
 
