@@ -312,6 +312,15 @@ class DatasetUSOD(Dataset):
                     # loss=bce+0.1*f 31_train_0.058.pth
                     # 2020-08-04 03:06:01 Test 31 avg mae=0.11399387341170084 score=0.6844463873396547
                     # 2020-08-04 03:08:01 Test 31 avg mae=0.07444360389966856 score=0.8787626041157726
+
+                    # 1_FLoss_Morphology_Train_CAM_123_224_256_A5_SFalse_DFalse_320_320_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211
+                    # 23_train_0.065.pth
+                    # 2020-08-05 01:36:52 Test 23 avg mae=0.10584519406080625 score=0.6931652778949701
+                    # 2020-08-05 01:40:45 Test 23 avg mae=0.07252354135906154 score=0.8806913579074058
+                    # 3_FLoss_Morphology_Train_CAM_123_224_256_A5_SFalse_DFalse_320_320_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211
+                    # 29_train_0.062.pth
+                    # 2020-08-05 05:43:12 Test 29 avg mae=0.10267482305265915 score=0.7039479408676812
+                    # 2020-08-05 05:47:09 Test 29 avg mae=0.07275413212112405 score=0.882560829883874
                     if epoch <= 10:
                         ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
                         ann = (0.75 * ann + 0.25 * ann_label)
@@ -320,6 +329,18 @@ class DatasetUSOD(Dataset):
                                                                  white_th=self.label_b, ratio_th=10)
                         ann2 = CRFTool.crf_label(img, np.expand_dims(ann, axis=0), a=self.label_a, b=self.label_b)
                         ann[change] = ann2[change]
+                        pass
+
+                    # 2_FLoss_Morphology_Train_CAM_123_224_256_A5_SFalse_DFalse_224_256_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211
+                    # 45_train_0.021.pth
+                    # 2020-08-04 17:00:15 Test 45 avg mae=0.10881691630042735 score=0.6741292126678432
+                    # 2020-08-04 17:03:43 Test 45 avg mae=0.07142853449860757 score=0.8794887318974295
+                    # 2_FLoss_Morphology_Train_CAM_123_224_256_A5_SFalse_DFalse_320_320_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211
+                    # 45_train_0.022.pth
+                    # 2020-08-04 20:45:27 Test 45 avg mae=0.0999465329797974 score=0.6952895536245347
+                    # 2020-08-04 20:49:32 Test 45 avg mae=0.0697628950389723 score=0.8812714221550307
+                    # ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
+                    # ann = (0.75 * ann + 0.25 * ann_label)
                     pass
 
                 imsave(Tools.new_dir(train_lbl_name), np.asarray(ann * 255, dtype=np.uint8), check_contrast=False)
@@ -720,7 +741,7 @@ class BASRunner(object):
             os.path.splitext(os.path.basename(img_path))[0])) for img_path in img_name_list] if save_path else None
         dataset_eval_sod = DatasetEvalUSOD(img_name_list=img_name_list, save_lbl_name_list=save_lbl_name_list,
                                            lab_name_list=lbl_name_list, size_test=size_test)
-        data_loader_eval_sod = DataLoader(dataset_eval_sod, batch_size, shuffle=False, num_workers=24)
+        data_loader_eval_sod = DataLoader(dataset_eval_sod, batch_size, shuffle=False, num_workers=4)
 
         # 执行
         avg_mae = 0.0
@@ -736,7 +757,7 @@ class BASRunner(object):
                 now_label = labels.squeeze().data.numpy()
                 return_m = net(inputs)
 
-                now_pred = return_m["out_up_sigmoid"].squeeze().cpu().data.numpy()
+                now_pred = return_m["out_up_sigmoid"].squeeze(dim=1).cpu().data.numpy()
 
                 if save_path:
                     for history, index in zip(now_pred, indexes):
@@ -809,16 +830,34 @@ pascal1500 256 2020-08-04 10:14:51 Test 0 avg mae=0.1028821981549263 score=0.785
 """
 
 
+"""
+# 2_FLoss_Morphology_Train_CAM_123_224_256_A5_SFalse_DFalse_320_320_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211
+# 45_train_0.022.pth
+dut_dmron_5166 224 2020-08-05 09:08:12 Test 0 avg mae=0.09008926899682719 score=0.7281718952176868
+dut_dmron_5166 256 2020-08-05 09:01:20 Test 0 avg mae=0.09248148293548693 score=0.7285735093798178
+dut_dmron_5166 320 2020-08-05 09:05:04 Test 0 avg mae=0.105216216258474 score=0.7083910172900764
+msra_b 224 2020-08-04 22:23:42 Test 0 avg mae=0.07168213189981235 score=0.8516327915563656
+msra_b 256 2020-08-04 22:16:17 Test 0 avg mae=0.06497850372030521 score=0.8599542318179539
+msra_b 320 2020-08-04 22:20:02 Test 0 avg mae=0.06682010682317586 score=0.8559865197613404
+ecssd 256 2020-08-05 08:59:27 Test 0 avg mae=0.0900277519628169 score=0.8497760071476959
+ecssd 320 2020-08-05 08:58:18 Test 0 avg mae=0.08739711255544708 score=0.8488951565951333
+dut_te 224 2020-08-05 09:03:41 Test 0 avg mae=0.09671546145977014 score=0.6877969999285881
+dut_te 256 2020-08-05 09:04:05 Test 0 avg mae=0.09584737636421801 score=0.6972996339919232
+dut_te 320 2020-08-05 09:05:00 Test 0 avg mae=0.10285064628181659 score=0.6970834774740019
+dut_tr 320 2020-08-05 09:47:18 Test 0 avg mae=0.07275877333330837 score=0.8777704077616192
+"""
+
+
 if __name__ == '__main__':
     os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
     # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1"
-    # os.environ["CUDA_VISIBLE_DEVICES"] = "2, 3"
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
-    _size_train, _size_test = 224, 256
-    _batch_size = 12 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
+    # _size_train, _size_test = 224, 256
+    # _batch_size = 12 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
 
-    # _size_train, _size_test = 320, 320
-    # _batch_size = 8 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
+    _size_train, _size_test = 320, 320
+    _batch_size = 8 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
 
     _is_all_data = False
     _is_supervised = False
@@ -831,12 +870,12 @@ if __name__ == '__main__':
     # _history_epoch_start, _history_epoch_freq, _save_epoch_freq = 2, 2, 2
     _label_a, _label_b, _has_crf = 0.3, 0.5, True
 
-    _learning_rate = [[0, 0.0001], [40, 0.0001]]
+    _learning_rate = [[0, 0.0001], [30, 0.00001]]
     _cam_label_dir = "../BASNetTemp/cam/CAM_123_224_256_A5_SFalse_DFalse"
     _cam_label_name = 'cam_up_norm_C23_crf'
     ####################################################################################################
 
-    _name_model = "1{}_Morphology_Train_{}_{}_{}{}{}{}_DieDai{}_{}_{}".format(
+    _name_model = "3{}_Morphology_Train_{}_{}_{}{}{}{}_DieDai{}_{}_{}".format(
         "_FLoss" if _is_f_loss else "", os.path.basename(_cam_label_dir), _size_train, _size_test,
         "_{}".format(_cam_label_name), "_Supervised" if _is_supervised else "", "_History" if _has_history else "",
         "_CRF" if _has_crf else "",  "{}_{}".format(_label_a, _label_b),
@@ -864,7 +903,7 @@ if __name__ == '__main__':
     # bas_runner.load_model(model_file_name="../BASNetTemp/saved_models/CAM_123_224_256/930_train_1.172.pth")
     # bas_runner.load_model(model_file_name="../BASNetTemp/saved_models/CAM_123_224_256_DTrue/1000_train_1.072.pth")
     bas_runner.load_model(model_file_name="../BASNetTemp/saved_models/CAM_123_224_256_DFalse/1000_train_1.154.pth")
-    bas_runner.train(epoch_num=50, start_epoch=0, history_epoch_start=_history_epoch_start,
+    bas_runner.train(epoch_num=40, start_epoch=0, history_epoch_start=_history_epoch_start,
                      history_epoch_freq=_history_epoch_freq, is_supervised=_is_supervised, has_history=_has_history)
 
     # EVAL
@@ -874,11 +913,11 @@ if __name__ == '__main__':
     #                 save_path="/media/ubuntu/4T/ALISURE/USOD/BASNetTemp/his/{}/test".format(_model_name))
 
     # EVAL
-    # _model_name = "1_FLoss_Morphology_Train_CAM_123_224_256_A5_SFalse_DFalse_224_256_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211"
-    # _model_file = "31_train_0.058.pth"
+    # _model_name = "3_FLoss_Morphology_Train_CAM_123_224_256_A5_SFalse_DFalse_320_320_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211"
+    # _model_file = "29_train_0.062.pth"
     # bas_runner.load_model(model_file_name="../BASNetTemp/saved_models/{}/{}".format(_model_name, _model_file))
     # sod_data = SODData(data_root_path="/media/ubuntu/4T/ALISURE/Data/SOD")
-    # img_name_list, lbl_name_list, dataset_name_list = sod_data.pascal1500()
+    # img_name_list, lbl_name_list, dataset_name_list = sod_data.duts_tr()
     # bas_runner.eval_by_image_label(
     #     bas_runner.net, img_name_list, lbl_name_list, epoch=0, batch_size=_batch_size,
     #     size_test=_size_test, save_path="../BASNetTemp/eval/{}/{}/test".format(dataset_name_list[0], _model_name))
