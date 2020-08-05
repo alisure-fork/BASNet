@@ -852,7 +852,7 @@ if __name__ == '__main__':
     _is_eval = False
 
     os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1" if _is_train else "0"
-    _batch_size = 16 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
+    _batch_size = 8 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
 
     _size_train = 224
     _size_vis = 256
