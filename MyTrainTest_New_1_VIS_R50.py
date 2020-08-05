@@ -391,12 +391,16 @@ class MICProduceClass(object):
 
 class BASNet(nn.Module):
 
-    def __init__(self, is_train=False, clustering_num_list=None):
+    def __init__(self, is_train=False, clustering_num_list=None, is_supervised_pre_train=False,
+                 is_unsupervised_pre_train=True, unsupervised_pre_train_path="./pre_model/MoCov2.pth"):
         super(BASNet, self).__init__()
         self.is_train = is_train
 
         # -------------Encoder--------------
-        backbone = resnet.__dict__["resnet50"](pretrained=False, replace_stride_with_dilation=[False, True, True])
+        backbone = resnet.__dict__["resnet50"](pretrained=is_supervised_pre_train,
+                                               replace_stride_with_dilation=[False, True, True])
+        if is_unsupervised_pre_train:
+            backbone = self.load_unsupervised_pre_train(backbone, unsupervised_pre_train_path)
         return_layers = {'relu': 'e0', 'layer1': 'e1', 'layer2': 'e2', 'layer3': 'e3', 'layer4': 'e4'}
         self.backbone = IntermediateLayerGetter(backbone, return_layers=return_layers)
         self.change_channel = ConvBlock(2048, 512)
@@ -486,6 +490,13 @@ class BASNet(nn.Module):
         batch_max, _ = torch.max(feature_map.view((feature_shape[0], -1)), dim=-1, keepdim=True)
         norm = torch.div(feature_map.view((feature_shape[0], -1)) - batch_min, batch_max - batch_min)
         return norm.view(feature_shape)
+
+    @staticmethod
+    def load_unsupervised_pre_train(model, pre_train_path, change_key="module.encoder."):
+        pre_train = torch.load(pre_train_path)["model"]
+        checkpoint = {key.replace(change_key, ""): pre_train[key] for key in pre_train.keys() if change_key in key}
+        model.load_state_dict(checkpoint, strict=False)
+        return model
 
     pass
 

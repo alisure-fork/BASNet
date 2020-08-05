@@ -447,11 +447,15 @@ class ConvBlock(nn.Module):
 
 class BASNet(nn.Module):
 
-    def __init__(self):
+    def __init__(self, is_supervised_pre_train=False,
+                 is_unsupervised_pre_train=True, unsupervised_pre_train_path="./pre_model/MoCov2.pth"):
         super(BASNet, self).__init__()
 
         # -------------Encoder--------------
-        backbone = resnet.__dict__["resnet50"](pretrained=True, replace_stride_with_dilation=[False, True, True])
+        backbone = resnet.__dict__["resnet50"](pretrained=is_supervised_pre_train,
+                                               replace_stride_with_dilation=[False, True, True])
+        if is_unsupervised_pre_train:
+            backbone = self.load_unsupervised_pre_train(backbone, unsupervised_pre_train_path)
         return_layers = {'relu': 'e0', 'layer1': 'e1', 'layer2': 'e2', 'layer3': 'e3', 'layer4': 'e4'}
         self.backbone = IntermediateLayerGetter(backbone, return_layers=return_layers)
 
@@ -523,6 +527,13 @@ class BASNet(nn.Module):
                 source, size=[target.size()[2], target.size()[3]], mode='bilinear', align_corners=False)
             pass
         return source
+
+    @staticmethod
+    def load_unsupervised_pre_train(model, pre_train_path, change_key="module.encoder."):
+        pre_train = torch.load(pre_train_path)["model"]
+        checkpoint = {key.replace(change_key, ""): pre_train[key] for key in pre_train.keys() if change_key in key}
+        model.load_state_dict(checkpoint, strict=False)
+        return model
 
     pass
 
@@ -820,7 +831,7 @@ if __name__ == '__main__':
     _is_all_data = False
     _is_supervised = True
     _has_history = False
-    _is_f_loss = True
+    _is_f_loss = False
 
     ####################################################################################################
     _history_epoch_start, _history_epoch_freq, _save_epoch_freq = 2, 1, 1
