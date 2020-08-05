@@ -8,7 +8,6 @@ import torch.nn as nn
 from PIL import Image
 from SODData import SODData
 import torch.optim as optim
-from torchvision.models import resnet
 from skimage import morphology
 import multiprocessing as multi_p
 import pydensecrf.densecrf as dcrf
@@ -17,7 +16,8 @@ from alisuretool.Tools import Tools
 import torch.backends.cudnn as cudnn
 from skimage.io import imread, imsave
 from torch.utils.data import DataLoader, Dataset
-from model.ResNet50 import ResNet, BasicBlock, Bottleneck
+from torchvision.models import resnet
+from torchvision.models._utils import IntermediateLayerGetter
 from pydensecrf.utils import unary_from_softmax, unary_from_labels
 
 
@@ -451,7 +451,9 @@ class BASNet(nn.Module):
         super(BASNet, self).__init__()
 
         # -------------Encoder--------------
-        self.backbone = ResNet(Bottleneck, [3, 4, 6, 3])
+        backbone = resnet.__dict__["resnet50"](pretrained=True, replace_stride_with_dilation=[False, True, True])
+        return_layers = {'relu': 'e0', 'layer1': 'e1', 'layer2': 'e2', 'layer3': 'e3', 'layer4': 'e4'}
+        self.backbone = IntermediateLayerGetter(backbone, return_layers=return_layers)
 
         # Convert
         self.convert_5 = ConvBlock(2048, 512)
@@ -461,47 +463,47 @@ class BASNet(nn.Module):
         self.convert_1 = ConvBlock(64, 128)
 
         # -------------Decoder-------------
-        self.decoder_1_b1 = BasicBlock(512, 512)  # 28
-        self.decoder_1_b2 = BasicBlock(512, 512)  # 28
-        self.decoder_1_c = ConvBlock(512, 512, has_relu=True)  # 28
+        self.decoder_1_b1 = resnet.BasicBlock(512, 512)  # 40
+        self.decoder_1_b2 = resnet.BasicBlock(512, 512)  # 40
+        self.decoder_1_c = ConvBlock(512, 512, has_relu=True)  # 40
 
-        self.decoder_2_b1 = BasicBlock(512, 512)  # 56
-        self.decoder_2_b2 = BasicBlock(512, 512)  # 56
-        self.decoder_2_c = ConvBlock(512, 256, has_relu=True)  # 56
+        self.decoder_2_b1 = resnet.BasicBlock(512, 512)  # 40
+        self.decoder_2_b2 = resnet.BasicBlock(512, 512)  # 40
+        self.decoder_2_c = ConvBlock(512, 256, has_relu=True)  # 40
 
-        self.decoder_3_b1 = BasicBlock(256, 256)  # 112
-        self.decoder_3_b2 = BasicBlock(256, 256)  # 112
-        self.decoder_3_c = ConvBlock(256, 256, has_relu=True)  # 112
+        self.decoder_3_b1 = resnet.BasicBlock(256, 256)  # 80
+        self.decoder_3_b2 = resnet.BasicBlock(256, 256)  # 80
+        self.decoder_3_c = ConvBlock(256, 256, has_relu=True)  # 80
 
-        self.decoder_4_b1 = BasicBlock(256, 256)  # 112
-        self.decoder_4_b2 = BasicBlock(256, 256)  # 112
-        self.decoder_4_c = ConvBlock(256, 128, has_relu=True)  # 112
+        self.decoder_4_b1 = resnet.BasicBlock(256, 256)  # 160
+        self.decoder_4_b2 = resnet.BasicBlock(256, 256)  # 160
+        self.decoder_4_c = ConvBlock(256, 128, has_relu=True)  # 160
 
-        self.decoder_5_b1 = BasicBlock(128, 128)  # 112
-        self.decoder_5_b2 = BasicBlock(128, 128)  # 112
-        self.decoder_5_out = nn.Conv2d(128, 1, 3, padding=1, bias=False)  # 112
+        self.decoder_5_b1 = resnet.BasicBlock(128, 128)  # 160
+        self.decoder_5_b2 = resnet.BasicBlock(128, 128)  # 160
+        self.decoder_5_out = nn.Conv2d(128, 1, 3, padding=1, bias=False)  # 160
         pass
 
     def forward(self, x):
         # -------------Encoder-------------
-        e0, e1, e2, e3, e4 = self.backbone(x)  # (64, 160), (256, 81), (512, 41), (1024, 21), (2048, 21)
-        e0 = self.convert_1(e0)  # 128
-        e1 = self.convert_2(e1)  # 256
-        e2 = self.convert_3(e2)  # 256
-        e3 = self.convert_4(e3)  # 512
-        e4 = self.convert_5(e4)  # 512
+        feature = self.backbone(x)  # (64, 160), (256, 80), (512, 40), (1024, 40), (2048, 40)
+        e0 = self.convert_1(feature["e0"])  # 128
+        e1 = self.convert_2(feature["e1"])  # 256
+        e2 = self.convert_3(feature["e2"])  # 256
+        e3 = self.convert_4(feature["e3"])  # 512
+        e4 = self.convert_5(feature["e4"])  # 512
 
         # -------------Decoder-------------
-        d1 = self.decoder_1_b2(self.decoder_1_b1(e4))  # 512 * 21 * 21
-        d1_d2 = self._up_to_target(self.decoder_1_c(d1), e3) + e3  # 512 * 21 * 21
+        d1 = self.decoder_1_b2(self.decoder_1_b1(e4))  # 512 * 40 * 40
+        d1_d2 = self._up_to_target(self.decoder_1_c(d1), e3) + e3  # 512 * 40 * 40
 
         d2 = self.decoder_2_b2(self.decoder_2_b1(d1_d2))  # 512 * 21 * 21
-        d2_d3 = self._up_to_target(self.decoder_2_c(d2), e2) + e2  # 512 * 41 * 41
+        d2_d3 = self._up_to_target(self.decoder_2_c(d2), e2) + e2  # 512 * 40 * 40
 
-        d3 = self.decoder_3_b2(self.decoder_3_b1(d2_d3))  # 256 * 41 * 41
-        d3_d4 = self._up_to_target(self.decoder_3_c(d3), e1) + e1  # 256 * 81 * 81
+        d3 = self.decoder_3_b2(self.decoder_3_b1(d2_d3))  # 256 * 40 * 40
+        d3_d4 = self._up_to_target(self.decoder_3_c(d3), e1) + e1  # 256 * 80 * 80
 
-        d4 = self.decoder_4_b2(self.decoder_4_b1(d3_d4))  # 256 * 81 * 81
+        d4 = self.decoder_4_b2(self.decoder_4_b1(d3_d4))  # 256 * 80 * 80
         d4_d5 = self._up_to_target(self.decoder_4_c(d4), e0) + e0  # 128 * 160 * 160
 
         d5 = self.decoder_5_b2(self.decoder_5_b1(d4_d5))  # 128 * 160 * 160
@@ -805,15 +807,15 @@ class BASRunner(object):
 
 
 if __name__ == '__main__':
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
     # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1"
-    # os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "2, 3"
 
-    # _size_train, _size_test = 224, 256
-    # _batch_size = 12 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
-
-    _size_train, _size_test = 320, 320
+    _size_train, _size_test = 224, 256
     _batch_size = 6 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
+
+    # _size_train, _size_test = 320, 320
+    # _batch_size = 6 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
 
     _is_all_data = False
     _is_supervised = True

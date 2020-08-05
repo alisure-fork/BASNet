@@ -14,7 +14,8 @@ from torchvision import transforms
 from alisuretool.Tools import Tools
 import torch.backends.cudnn as cudnn
 from torch.utils.data import DataLoader, Dataset
-from model.ResNet50 import ResNet, BasicBlock, Bottleneck
+from torchvision.models import resnet
+from torchvision.models._utils import IntermediateLayerGetter
 from pydensecrf.utils import unary_from_softmax, unary_from_labels
 
 
@@ -390,46 +391,71 @@ class MICProduceClass(object):
 
 class BASNet(nn.Module):
 
-    def __init__(self, is_train=False, clustering_num=None):
+    def __init__(self, is_train=False, clustering_num_list=None):
         super(BASNet, self).__init__()
         self.is_train = is_train
 
         # -------------Encoder--------------
-        self.backbone = ResNet(Bottleneck, [3, 4, 6, 3])
+        backbone = resnet.__dict__["resnet50"](pretrained=False, replace_stride_with_dilation=[False, True, True])
+        return_layers = {'relu': 'e0', 'layer1': 'e1', 'layer2': 'e2', 'layer3': 'e3', 'layer4': 'e4'}
+        self.backbone = IntermediateLayerGetter(backbone, return_layers=return_layers)
+        self.change_channel = ConvBlock(2048, 512)
 
         # -------------MIC-------------
-        self.clustering_num_list = 512 if clustering_num is None else clustering_num
+        self.clustering_num_list = list([256, 512]) if clustering_num_list is None else clustering_num_list
 
         self.mic_l2norm = MICNormalize(2)
         self.mic_pool = nn.MaxPool2d(2, 2, ceil_mode=True)
 
         # MIC 1
-        self.change_channel = ConvBlock(2048, 1024, has_relu=True)
-        self.mic_b1 = BasicBlock(1024, 1024)  # 28 32 40
-        self.mic_b2 = BasicBlock(1024, 1024)
-        self.mic_c1 = ConvBlock(1024, self.clustering_num, has_relu=True)
+        self.mic_1_b1 = resnet.BasicBlock(512, 512)  # 28 32 40
+        self.mic_1_b2 = resnet.BasicBlock(512, 512)
+        self.mic_1_b3 = resnet.BasicBlock(512, 512)
+        self.mic_1_c1 = ConvBlock(512, self.clustering_num_list[0], has_relu=True)
+
+        # MIC 2
+        self.mic_2_b1 = resnet.BasicBlock(512, 512)  # 14 16 20
+        self.mic_2_b2 = resnet.BasicBlock(512, 512)
+        self.mic_2_b3 = resnet.BasicBlock(512, 512)
+        self.mic_2_c1 = ConvBlock(512, self.clustering_num_list[1], has_relu=True)
         pass
 
     def forward(self, x):
         x_for_up = x
 
         # -------------Encoder-------------
-        e0, e1, e2, e3, e4 = self.backbone(x)  # (64, 160), (256, 81), (512, 41), (1024, 21), (2048, 21)
-        e4 = self.change_channel(e4)  # 512 * 28 * 28
+        feature = self.backbone(x)  # (64, 160), (256, 80), (512, 40), (1024, 40), (2048, 40)
+        e4 = self.change_channel(feature["e4"])  # (512, 40)
         # -------------MIC-------------
         # 1
-        mic_feature = self.mic_b2(self.mic_b1(e4))  # 512 * 28 * 28
-        mic = self.mic_c1(mic_feature)  # 128 * 28 * 28
-        smc_logits, smc_l2norm = self.salient_map_clustering(mic)
-        return_m = {"smc_logits": smc_logits, "smc_l2norm": smc_l2norm}
+        mic_1_feature = self.mic_1_b3(self.mic_1_b2(self.mic_1_b1(e4)))  # (512, 40)
+        mic_1 = self.mic_1_c1(mic_1_feature)  # (256, 40)
+        smc_logits_1, smc_l2norm_1 = self.salient_map_clustering(mic_1)
+        return_m1 = {"smc_logits": smc_logits_1, "smc_l2norm": smc_l2norm_1}
+
+        # 2
+        mic_2_feature = self.mic_2_b3(self.mic_2_b2(self.mic_2_b1(self.mic_pool(mic_1_feature))))  # (512, 20)
+        mic_2 = self.mic_2_c1(mic_2_feature)  # (512, 20)
+        smc_logits_2, smc_l2norm_2 = self.salient_map_clustering(mic_2)
+        return_m2 = {"smc_logits": smc_logits_2, "smc_l2norm": smc_l2norm_2}
+
+        return_m = {"m1": return_m1, "m2": return_m2}
 
         # -------------Label-------------
         return_l = None
         if not self.is_train:
-            cam = self.cluster_activation_map(smc_logits, mic)  # 簇激活图：Cluster Activation Map
-            cam_up = self._up_to_target(cam, x_for_up)
-            cam_up_norm = self._feature_norm(cam_up)
-            return_l = {"cam_up_norm": cam_up_norm}
+            cam_1 = self.cluster_activation_map(smc_logits_1, mic_1)  # 簇激活图：Cluster Activation Map
+            cam_1_up = self._up_to_target(cam_1, x_for_up)
+            cam_1_up_norm = self._feature_norm(cam_1_up)
+
+            cam_2 = self.cluster_activation_map(smc_logits_2, mic_2)  # 簇激活图：Cluster Activation Map
+            cam_2_up = self._up_to_target(cam_2, cam_1_up)
+            cam_2_up_norm = self._feature_norm(cam_2_up)
+
+            cam_up_norm_12 = (cam_1_up_norm + cam_2_up_norm) / 2
+
+            return_l = {"cam_up_norm_C1": cam_1_up_norm, "cam_up_norm_C2": cam_2_up_norm,
+                        "cam_up_norm_C12": cam_up_norm_12}
             pass
 
         return return_m, return_l
@@ -471,7 +497,7 @@ class BASNet(nn.Module):
 class BASRunner(object):
 
     def __init__(self, batch_size=8, multi_num=16, size_train=224, size_vis=256, is_train=True,
-                 clustering_num=512, clustering_ratio=2,
+                 clustering_num_1=256, clustering_num_2=512, clustering_ratio_1=1, clustering_ratio_2=2,
                  tra_img_name_list=None, tra_lbl_name_list=None, tra_data_name_list=None,
                  model_dir="./saved_models/cam", cam_dir="./cam/cam"):
         self.batch_size = batch_size
@@ -498,17 +524,21 @@ class BASRunner(object):
         self.data_batch_num = len(self.data_loader_sod)
 
         # Model
-        self.net = BASNet(is_train=self.is_train, clustering_num=clustering_num)
+        self.net = BASNet(is_train=self.is_train, clustering_num_list=[clustering_num_1, clustering_num_2])
         if torch.cuda.is_available():
             self.net = nn.DataParallel(self.net).cuda()
             cudnn.benchmark = True
             pass
 
         # MIC
-        self.produce_class11 = MICProduceClass(self.data_num, out_dim=clustering_num, ratio=clustering_ratio)
-        self.produce_class12 = MICProduceClass(self.data_num, out_dim=clustering_num, ratio=clustering_ratio)
+        self.produce_class11 = MICProduceClass(self.data_num, out_dim=clustering_num_1, ratio=clustering_ratio_1)
+        self.produce_class21 = MICProduceClass(self.data_num, out_dim=clustering_num_2, ratio=clustering_ratio_2)
+        self.produce_class12 = MICProduceClass(self.data_num, out_dim=clustering_num_1, ratio=clustering_ratio_1)
+        self.produce_class22 = MICProduceClass(self.data_num, out_dim=clustering_num_2, ratio=clustering_ratio_2)
         self.produce_class11.init()
+        self.produce_class21.init()
         self.produce_class12.init()
+        self.produce_class22.init()
 
         # Loss and optimizer
         self.bce_loss = nn.BCELoss().cuda()
@@ -532,9 +562,12 @@ class BASRunner(object):
         Tools.print("train cams: {}".format(len(tra_cam_name_list)))
         return tra_cam_name_list
 
-    def all_loss_fusion(self, mic_out, mic_labels):
-        loss_mic = self.mic_loss(mic_out, mic_labels)
-        return loss_mic
+    def all_loss_fusion(self, mic_1_out, mic_2_out, mic_labels_1, mic_labels_2):
+        loss_mic_1 = self.mic_loss(mic_1_out, mic_labels_1)
+        loss_mic_2 = self.mic_loss(mic_2_out, mic_labels_2)
+
+        loss_all = loss_mic_1 + loss_mic_2
+        return loss_all, [loss_mic_1, loss_mic_2]
 
     def save_cam_info(self, cams, indexes, name=None):
         for cam, index in zip(cams, indexes):
@@ -549,6 +582,7 @@ class BASRunner(object):
             self.net.eval()
             Tools.print("Update label {} .......".format(start_epoch))
             self.produce_class11.reset()
+            self.produce_class21.reset()
             with torch.no_grad():
                 for _idx, (inputs, _, indexes) in tqdm(enumerate(self.data_loader_sod), total=self.data_batch_num):
                     inputs = inputs.type(torch.FloatTensor).cuda()
@@ -556,14 +590,20 @@ class BASRunner(object):
 
                     return_m, _ = self.net(inputs)
 
-                    self.produce_class11.cal_label(return_m["smc_logits"], indexes)
+                    self.produce_class11.cal_label(return_m["m1"]["smc_logits"], indexes)
+                    self.produce_class21.cal_label(return_m["m2"]["smc_logits"], indexes)
                     pass
                 pass
             classes = self.produce_class12.classes
             self.produce_class12.classes = self.produce_class11.classes
             self.produce_class11.classes = classes
-            Tools.print("Update: [{}] {}/{}".format(start_epoch, self.produce_class11.count,
-                                                    self.produce_class11.count_2))
+            classes = self.produce_class22.classes
+            self.produce_class22.classes = self.produce_class21.classes
+            self.produce_class21.classes = classes
+            Tools.print("Update: [{}] 1-{}/{}".format(start_epoch, self.produce_class11.count,
+                                                      self.produce_class11.count_2))
+            Tools.print("Update: [{}] 2-{}/{}".format(start_epoch, self.produce_class21.count,
+                                                      self.produce_class21.count_2))
             pass
 
         all_loss = 0
@@ -573,10 +613,11 @@ class BASRunner(object):
 
             ###########################################################################
             # 1 训练模型
-            all_loss = 0.0
+            all_loss, all_loss_mic_1, all_loss_mic_2 = 0.0, 0.0, 0.0
             self.net.train()
 
             self.produce_class11.reset()
+            self.produce_class21.reset()
 
             for i, (inputs, _, indexes) in tqdm(enumerate(self.data_loader_sod), total=self.data_batch_num):
                 inputs = inputs.type(torch.FloatTensor).cuda()
@@ -587,30 +628,43 @@ class BASRunner(object):
 
                 ######################################################################################################
                 # MIC
-                self.produce_class11.cal_label(return_m["smc_logits"], indexes)
-                mic_target = return_m["smc_logits"]
-                mic_labels = self.produce_class12.get_label(indexes).cuda()
+                self.produce_class11.cal_label(return_m["m1"]["smc_logits"], indexes)
+                self.produce_class21.cal_label(return_m["m2"]["smc_logits"], indexes)
+                mic_target_1 = return_m["m1"]["smc_logits"]
+                mic_target_2 = return_m["m2"]["smc_logits"]
+                mic_labels_1 = self.produce_class12.get_label(indexes).cuda()
+                mic_labels_2 = self.produce_class22.get_label(indexes).cuda()
 
-                loss = self.all_loss_fusion(mic_target, mic_labels)
+                loss, loss_mic = self.all_loss_fusion(mic_target_1, mic_target_2, mic_labels_1, mic_labels_2)
                 ######################################################################################################
 
                 loss.backward()
                 self.optimizer.step()
 
                 all_loss += loss.item()
+                all_loss_mic_1 += loss_mic[0].item()
+                all_loss_mic_2 += loss_mic[1].item()
                 if i % print_ite_num == 0:
-                    Tools.print("[E:{:4d}/{:4d},b:{:4d}/{:4d}] l:{:.2f}/{:.2f}".format(
-                        epoch, epoch_num, i, self.data_batch_num, all_loss / (i + 1), loss.item()))
+                    Tools.print("[E:{:4d}/{:4d},b:{:4d}/{:4d}] l:{:.2f}/{:.2f} mic:{:.2f}/{:.2f}-{:.2f}/{:.2f}".format(
+                        epoch, epoch_num, i, self.data_batch_num, all_loss / (i + 1),
+                        loss.item(), all_loss_mic_1 / (i + 1), loss_mic[0].item(),
+                        all_loss_mic_2 / (i + 1), loss_mic[1].item()))
                     pass
 
                 pass
 
-            Tools.print("[E:{:3d}/{:3d}] loss:{:.3f}".format(epoch, epoch_num, all_loss / self.data_batch_num))
+            Tools.print("[E:{:3d}/{:3d}] loss:{:.3f} mic1:{:.3f} mic2:{:.3f}".format(
+                epoch, epoch_num, all_loss / self.data_batch_num,
+                all_loss_mic_1 / self.data_batch_num, all_loss_mic_2 / self.data_batch_num))
 
             classes = self.produce_class12.classes
             self.produce_class12.classes = self.produce_class11.classes
             self.produce_class11.classes = classes
-            Tools.print("Train: [{}] {}/{}".format(epoch, self.produce_class11.count, self.produce_class11.count_2))
+            classes = self.produce_class22.classes
+            self.produce_class22.classes = self.produce_class21.classes
+            self.produce_class21.classes = classes
+            Tools.print("Train: [{}] 1-{}/{}".format(epoch, self.produce_class11.count, self.produce_class11.count_2))
+            Tools.print("Train: [{}] 2-{}/{}".format(epoch, self.produce_class21.count, self.produce_class21.count_2))
 
             ###########################################################################
             # 2 保存模型
@@ -814,7 +868,8 @@ if __name__ == '__main__':
     else:
         bas_runner = BASRunner(batch_size=_batch_size, multi_num=_multi_num,
                                size_train=_size_train, size_vis=_size_vis, is_train=_is_train,
-                               clustering_num=128 * 4, clustering_ratio=2,
+                               clustering_num_1=128 * 4, clustering_num_2=128 * 4,
+                               clustering_ratio_1=1, clustering_ratio_2=2,
                                tra_img_name_list=all_image, tra_lbl_name_list=all_mask,
                                tra_data_name_list=all_dataset_name, cam_dir="../BASNetTemp/cam/{}".format(_name_cam),
                                model_dir="../BASNetTemp/saved_models/{}".format(_name_model))
