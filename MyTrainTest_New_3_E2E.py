@@ -319,8 +319,8 @@ class DatasetCAMVIS(Dataset):
             image = torch.cat([torch.unsqueeze(image, dim=0) for image in image_list], dim=0)
         else:
             image = torch.cat([torch.unsqueeze(sample[0][0], 0) for sample in samples], dim=0)
-            image_for_crf = torch.cat([torch.unsqueeze(sample[1], 0) for sample in samples], dim=0)
-            idx = torch.Tensor([sample[2] for sample in samples])
+            image_for_crf = [sample[1] for sample in samples]
+            idx = [sample[2] for sample in samples]
             pass
         return image, image_for_crf, idx
 
@@ -1108,20 +1108,6 @@ class BASRunner(object):
             self.load_model(model_file_name)
             pass
 
-        # 多线程加速
-        def _save_cam(_dataset, _index, _result, _image_for_crf, __i):
-            _dataset.save_cam(idx=int(_index[__i]), name="image", cam=np.asarray(_image_for_crf[__i]))
-            for _key in _result.keys():
-                _value = _result[_key][__i].detach().cpu()
-                _dataset.save_cam(idx=int(_index[__i]), name=_key, cam=np.asarray(_value.squeeze()))
-
-                _value_crf = CRFTool.crf_torch(torch.unsqueeze(_image_for_crf[__i], dim=0) * 255,
-                                               torch.unsqueeze(_value, dim=0), t=5)
-                _dataset.save_cam(idx=int(_index[__i]), name="{}_crf".format(_key),
-                                  cam=np.asarray(_value_crf.squeeze()))
-                pass
-            pass
-
         self.net.eval()
         with torch.no_grad():
             for _idx, (inputs, image_for_crf, index) in tqdm(enumerate(data_loader), total=data_batch_num):
@@ -1129,11 +1115,14 @@ class BASRunner(object):
 
                 result = self.net(inputs, has_mic=True, has_cam=True, has_sod=False)
                 result = result["cam"]
+                for key in result.keys():
+                    result[key] = result[key].detach().cpu()
+                    pass
+
                 if multi_num > 1:
                     dataset.save_cam(idx=int(index), name="image", cam=np.asarray(image_for_crf))
                     for key in result.keys():
-                        value = result[key].detach().cpu()
-                        value_mean = torch.mean(value, dim=0)
+                        value_mean = torch.mean(result[key], dim=0)
                         dataset.save_cam(idx=int(index), name=key, cam=np.asarray(value_mean.squeeze()))
 
                         value_crf = CRFTool.crf_torch(torch.unsqueeze(image_for_crf, dim=0) * 255,
@@ -1141,8 +1130,20 @@ class BASRunner(object):
                         dataset.save_cam(idx=int(index), name="{}_crf".format(key), cam=np.asarray(value_crf.squeeze()))
                         pass
                 else:
+                    # 不加速
                     for _i in range(inputs.shape[0]):
-                        _save_cam(dataset, index, result, image_for_crf, _i)
+                        self._save_cam(dataset, index, result, image_for_crf, _i)
+                        pass
+
+                    # 加速
+                    # pool_num = multi_p.cpu_count()
+                    # pool_num = pool_num if pool_num < inputs.shape[0] else inputs.shape[0]
+                    # pool = multi_p.Pool(processes=pool_num)
+                    # for _i in range(inputs.shape[0]):
+                    #     pool.apply_async(self._save_cam, args=(dataset, index, result, image_for_crf, _i))
+                    #     pass
+                    # pool.close()
+                    # pool.join()
                     pass
 
                 pass
@@ -1274,8 +1275,8 @@ class BASRunner(object):
 
     # 预测评估
     @staticmethod
-    def eval_by_image_label(net, img_name_list, lbl_name_list,
-                            epoch=0, size_test=256, batch_size=16, th_num=25, beta_2=0.3, save_path=None):
+    def eval_by_image_label(net, img_name_list, lbl_name_list, epoch=0,
+                            size_test=256, batch_size=16, th_num=25, beta_2=0.3, save_path=None):
         # 数据
         save_lbl_name_list = [os.path.join(save_path, '{}.bmp'.format(
             os.path.splitext(os.path.basename(img_path))[0])) for img_path in img_name_list] if save_path else None
@@ -1401,6 +1402,21 @@ class BASRunner(object):
         loss = 1 - (1 + 0.3) * (precision * recall) / (0.3 * precision + recall)
         return loss
 
+    # 多线程加速
+    @staticmethod
+    def _save_cam(_dataset, _index, _result, _image_for_crf, __i):
+        _dataset.save_cam(idx=int(_index[__i]), name="image", cam=np.asarray(_image_for_crf[__i]))
+        for _key in _result.keys():
+            _value = _result[_key][__i]
+            _dataset.save_cam(idx=int(_index[__i]), name=_key, cam=np.asarray(_value.squeeze()))
+
+            _value_crf = CRFTool.crf_torch(torch.unsqueeze(_image_for_crf[__i], dim=0) * 255,
+                                           torch.unsqueeze(_value, dim=0), t=5)
+            _dataset.save_cam(idx=int(_index[__i]), name="{}_crf".format(_key),
+                              cam=np.asarray(_value_crf.squeeze()))
+            pass
+        pass
+
     pass
 
 
@@ -1414,8 +1430,9 @@ def train(mic_batch_size, sod_batch_size):
     img_name_list, lbl_name_list, data_name_list = sod_data.duts_tr()
 
     # 流程控制
+    is_train = True
     has_train_mic = False
-    has_save_cam = True
+    has_save_cam = False
     has_train_sod = True
     train_sod_is_supervised = False
     train_sod_has_history = True
@@ -1447,32 +1464,49 @@ def train(mic_batch_size, sod_batch_size):
         mic_size_train=mic_size_train, size_cam=size_cam, size_sod_train=size_sod_train, size_sod_test=size_sod_test,
         multi_num=multi_num, label_a=label_a, label_b=label_b)
 
-    # 训练MIC
-    if has_train_mic:
-        model_file_name = None
-        # model_file_name = "../BASNetTemp_E2E/saved_models/R50_CAM_12_224_256_DFalse/mic_final_200.pth"
-        bas_runner.train_mic(epoch_num=mic_epoch_num, start_epoch=0, model_file_name=model_file_name,
-                             save_epoch_freq=save_mic_epoch_freq, lr=0.00001)
-        pass
+    if is_train:
+        # 训练MIC
+        if has_train_mic:
+            model_file_name = None
+            # model_file_name = "../BASNetTemp_E2E/saved_models/R50_CAM_12_224_256_DFalse/mic_final_200.pth"
+            bas_runner.train_mic(epoch_num=mic_epoch_num, start_epoch=0, model_file_name=model_file_name,
+                                 save_epoch_freq=save_mic_epoch_freq, lr=0.00001)
+            pass
 
-    # 保存CAM
-    if has_save_cam:
+        # 保存CAM
+        if has_save_cam:
+            model_file_name = "../BASNetTemp_E2E/saved_models/R50_CAM_12_224_256_DFalse/mic_final_200.pth"
+            bas_runner.vis_cam(model_file_name=model_file_name)
+
+            # 计算指标
+            bas_runner.eval_by_label_predict(img_name_list, lbl_name_list, data_name_list, cam_label_dir,
+                                             cam_label_name, size_eval=None, th_num=25, beta_2=0.3, has_data_name=True)
+            pass
+
+        # 训练SOD
+        if has_train_sod:
+            model_file_name = "../BASNetTemp_E2E/saved_models/R50_CAM_12_224_256_DFalse/mic_final_200.pth"
+            bas_runner.train_sod(epoch_num=sod_epoch_num, start_epoch=0, save_epoch_freq=save_sod_epoch_freq,
+                                 is_supervised=train_sod_is_supervised, has_history=True,
+                                 lr=0.0001, model_file_name=model_file_name,
+                                 history_epoch_start=history_epoch_start, history_epoch_freq=history_epoch_freq)
+            pass
+    else:
         model_file_name = "../BASNetTemp_E2E/saved_models/R50_CAM_12_224_256_DFalse/mic_final_200.pth"
-        bas_runner.vis_cam(model_file_name=model_file_name)
+        Tools.print("Load model form {}".format(model_file_name))
+        bas_runner.load_model(model_file_name)
 
-        # 计算指标
-        bas_runner.eval_by_label_predict(img_name_list, lbl_name_list, data_name_list, cam_label_dir,
-                                         cam_label_name, size_eval=None, th_num=25, beta_2=0.3, has_data_name=True)
-        pass
-
-    # 训练SOD
-    if has_train_sod:
-        model_file_name = None
-        # model_file_name = "../BASNetTemp_E2E/saved_models/R50_CAM_12_224_256_DFalse/mic_final_200.pth"
-        bas_runner.train_sod(epoch_num=sod_epoch_num, start_epoch=0, save_epoch_freq=save_sod_epoch_freq,
-                             is_supervised=train_sod_is_supervised, has_history=True,
-                             lr=0.0001, model_file_name=model_file_name,
-                             history_epoch_start=history_epoch_start, history_epoch_freq=history_epoch_freq)
+        sod_data = SODData(data_root_path="/media/ubuntu/4T/ALISURE/Data/SOD")
+        for data_set in [sod_data.cssd, sod_data.ecssd, sod_data.msra_1000_asd, sod_data.msra10k,
+                         sod_data.msra_b, sod_data.sed2, sod_data.dut_dmron_5166, sod_data.hku_is,
+                         sod_data.sod, sod_data.thur15000, sod_data.pascal1500, sod_data.pascal_s,
+                         sod_data.judd, sod_data.duts_te, sod_data.duts_tr, sod_data.cub_200_2011]:
+            img_name_list, lbl_name_list, dataset_name_list = data_set()
+            Tools.print("Begin eval {}".format(dataset_name_list[0]))
+            bas_runner.eval_by_image_label(bas_runner.net, img_name_list, lbl_name_list, epoch=0,
+                                           batch_size=sod_batch_size, size_test=size_sod_test,
+                                           save_path="../BASNetTemp_E2E/eval/{}/test".format(dataset_name_list[0]))
+            pass
         pass
 
     pass
@@ -1480,6 +1514,7 @@ def train(mic_batch_size, sod_batch_size):
 
 if __name__ == '__main__':
     os.environ["CUDA_VISIBLE_DEVICES"] = "2, 3"
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1"
     _mic_batch_size = 12 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
     _sod_batch_size = 4 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
 
