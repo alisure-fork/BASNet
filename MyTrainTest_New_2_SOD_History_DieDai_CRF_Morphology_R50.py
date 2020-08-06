@@ -432,6 +432,11 @@ is_supervised_pre_train
 is_unsupervised_pre_train
 2020-08-05 18:28:53 Test 39 avg mae=0.0489034632394237 score=0.8598464423336043
 2020-08-05 18:31:45 Test 39 avg mae=0.013386835949495435 score=0.9809714979566246
+
+R50_1_Morphology_Train_CAM_123_224_256_A5_SFalse_DFalse_320_320_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211
+19_train_0.063.pth
+2020-08-06 00:15:24 Test 19 avg mae=0.10735431700269192 score=0.6911668524814638
+2020-08-06 00:20:32 Test 19 avg mae=0.0695407475260171 score=0.8907156497510346
 """
 
 
@@ -833,15 +838,30 @@ class BASRunner(object):
 # 4 Main
 
 
+"""
+dut_dmron_5166 320 2020-08-06 11:34:45 Test 0 avg mae=0.08417008735204892 score=0.7514609826751497
+dut_dmron_5166 256 2020-08-06 11:35:37 Test 0 avg mae=0.09943417199907888 score=0.7357637453850571
+dut_dmron_5166 240 2020-08-06 11:38:19 Test 0 avg mae=0.08378190836251544 score=0.7527351531616690
+
+msra_b 320 2020-08-06 12:13:52 Test 0 avg mae=0.05882423051367168 score=0.8876016764520471
+msra_b 240 2020-08-06 12:12:24 Test 0 avg mae=0.06310220548047793 score=0.8792714795165546
+
+ecssd 400 2020-08-06 12:17:47 Test 0 avg mae=0.09875074808602918 score=0.8380909748089568
+ecssd 320 2020-08-06 12:15:25 Test 0 avg mae=0.09106177961855323 score=0.8471667136215534
+ecssd 240 2020-08-06 12:15:46 Test 0 avg mae=0.11315359232088405 score=0.8279910151378724
+"""
+
+
 if __name__ == '__main__':
     # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
     # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1"
     os.environ["CUDA_VISIBLE_DEVICES"] = "2, 3"
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 
     # _size_train, _size_test = 224, 256
     # _batch_size = 6 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
 
-    _size_train, _size_test = 320, 320
+    _size_train, _size_test = 320, 400
     _batch_size = 6 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
 
     _is_all_data = False
@@ -896,11 +916,11 @@ if __name__ == '__main__':
     #                 save_path="/media/ubuntu/4T/ALISURE/USOD/BASNetTemp/his/{}/test".format(_model_name))
 
     # EVAL
-    # _model_name = "3_FLoss_Morphology_Train_CAM_123_224_256_A5_SFalse_DFalse_320_320_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211"
-    # _model_file = "29_train_0.062.pth"
+    # _model_name = "R50_1_Morphology_Train_CAM_123_224_256_A5_SFalse_DFalse_320_320_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211"
+    # _model_file = "19_train_0.063.pth"
     # bas_runner.load_model(model_file_name="../BASNetTemp/saved_models/{}/{}".format(_model_name, _model_file))
     # sod_data = SODData(data_root_path="/media/ubuntu/4T/ALISURE/Data/SOD")
-    # img_name_list, lbl_name_list, dataset_name_list = sod_data.duts_tr()
+    # img_name_list, lbl_name_list, dataset_name_list = sod_data.ecssd()
     # bas_runner.eval_by_image_label(
     #     bas_runner.net, img_name_list, lbl_name_list, epoch=0, batch_size=_batch_size,
     #     size_test=_size_test, save_path="../BASNetTemp/eval/{}/{}/test".format(dataset_name_list[0], _model_name))
