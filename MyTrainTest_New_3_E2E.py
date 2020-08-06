@@ -314,8 +314,14 @@ class DatasetCAMVIS(Dataset):
 
     @staticmethod
     def collate_fn(samples):
-        image_list, image_for_crf, idx = samples[0]
-        image = torch.cat([torch.unsqueeze(image, dim=0) for image in image_list], dim=0)
+        if len(samples) == 1:
+            image_list, image_for_crf, idx = samples[0]
+            image = torch.cat([torch.unsqueeze(image, dim=0) for image in image_list], dim=0)
+        else:
+            image = torch.cat([torch.unsqueeze(sample[0][0], 0) for sample in samples], dim=0)
+            image_for_crf = torch.cat([torch.unsqueeze(sample[1], 0) for sample in samples], dim=0)
+            idx = torch.Tensor([sample[2] for sample in samples])
+            pass
         return image, image_for_crf, idx
 
     pass
@@ -879,8 +885,8 @@ class BASRunner(object):
             clustering_ratio_1=clustering_ratio_1,  clustering_ratio_2=clustering_ratio_2,
             img_name_list=img_name_list, size_mic=mic_size_train, batch_size=mic_batch_size)
         self.mic_vis_prepare = self._mic_vis_prepare(
-            img_name_list=img_name_list, data_name_list=data_name_list,
-            cam_label_dir=cam_label_dir, size_cam=size_cam, multi_num=multi_num)
+            img_name_list=img_name_list, data_name_list=data_name_list, cam_label_dir=cam_label_dir,
+            size_cam=size_cam, multi_num=multi_num, batch_size=mic_batch_size)
         self.sod_train_prepare = self._sod_train_prepare(
             batch_size=sod_batch_size, size_sod_train=size_sod_train, size_sod_test=size_sod_test,
             img_name_list=img_name_list, lbl_name_list=lbl_name_list, data_name_list=data_name_list,
@@ -928,15 +934,18 @@ class BASRunner(object):
         return result
 
     @staticmethod
-    def _mic_vis_prepare(img_name_list, data_name_list, cam_label_dir, size_cam=256, multi_num=5):
+    def _mic_vis_prepare(img_name_list, data_name_list, cam_label_dir, size_cam=256, multi_num=5, batch_size=4):
         result = {}
+
+        if multi_num > 1:
+            batch_size = 1
 
         cam_label_dir = Tools.new_dir(cam_label_dir)
         tra_cam_name_list = [os.path.join(cam_label_dir, '{}_{}.bmp'.format(dataset_name, os.path.splitext(
             os.path.basename(img_path))[0])) for img_path, dataset_name in zip(img_name_list, data_name_list)]
         dataset_cam_vis = DatasetCAMVIS(img_name_list=img_name_list, multi_num=multi_num,
                                         cam_name_list=tra_cam_name_list, size_vis=size_cam)
-        data_loader_cam_vis = DataLoader(dataset_cam_vis, 1, shuffle=False,
+        data_loader_cam_vis = DataLoader(dataset_cam_vis, batch_size, shuffle=False,
                                          num_workers=4, collate_fn=dataset_cam_vis.collate_fn)
         data_num, data_batch_num = len(dataset_cam_vis), len(data_loader_cam_vis)
 
@@ -944,6 +953,7 @@ class BASRunner(object):
         result["data_loader"] = data_loader_cam_vis
         result["data_num"] = data_num
         result["data_batch_num"] = data_batch_num
+        result["multi_num"] = multi_num
         return result
 
     def _sod_train_prepare(self, batch_size=8, size_sod_train=224, size_sod_test=256, has_f_loss=False,
@@ -973,13 +983,18 @@ class BASRunner(object):
         return result
 
     # 训练MIC
-    def train_mic(self, epoch_num=100, start_epoch=0, save_epoch_freq=5, lr=0.00001):
+    def train_mic(self, epoch_num=100, start_epoch=0, save_epoch_freq=5, lr=0.00001, model_file_name=None):
         produce_class11 = self.mic_train_prepare["produce_class11"]
         produce_class12 = self.mic_train_prepare["produce_class12"]
         produce_class21 = self.mic_train_prepare["produce_class21"]
         produce_class22 = self.mic_train_prepare["produce_class22"]
         data_loader = self.mic_train_prepare["data_loader"]
         data_batch_num = self.mic_train_prepare["data_batch_num"]
+
+        if model_file_name is not None:
+            Tools.print("Load model form {}".format(model_file_name))
+            self.load_model(model_file_name)
+            pass
 
         if start_epoch >= 0:
             self.net.eval()
@@ -1081,13 +1096,73 @@ class BASRunner(object):
         Tools.print()
         pass
 
-    def train_sod(self, epoch_num=50, start_epoch=0, save_epoch_freq=2, is_supervised=False,
-                  has_history=False, history_epoch_start=10, history_epoch_freq=10, lr=0.0001):
+    # 获得MIC的结果CAM
+    def vis_cam(self, model_file_name=None):
+        dataset = self.mic_vis_prepare["dataset"]
+        data_loader = self.mic_vis_prepare["data_loader"]
+        data_batch_num = self.mic_vis_prepare["data_batch_num"]
+        multi_num = self.mic_vis_prepare["multi_num"]
+
+        if model_file_name is not None:
+            Tools.print("Load model form {}".format(model_file_name))
+            self.load_model(model_file_name)
+            pass
+
+        # 多线程加速
+        def _save_cam(_dataset, _index, _result, _image_for_crf, __i):
+            _dataset.save_cam(idx=int(_index[__i]), name="image", cam=np.asarray(_image_for_crf[__i]))
+            for _key in _result.keys():
+                _value = _result[_key][__i].detach().cpu()
+                _dataset.save_cam(idx=int(_index[__i]), name=_key, cam=np.asarray(_value.squeeze()))
+
+                _value_crf = CRFTool.crf_torch(torch.unsqueeze(_image_for_crf[__i], dim=0) * 255,
+                                               torch.unsqueeze(_value, dim=0), t=5)
+                _dataset.save_cam(idx=int(_index[__i]), name="{}_crf".format(_key),
+                                  cam=np.asarray(_value_crf.squeeze()))
+                pass
+            pass
+
+        self.net.eval()
+        with torch.no_grad():
+            for _idx, (inputs, image_for_crf, index) in tqdm(enumerate(data_loader), total=data_batch_num):
+                inputs = inputs.type(torch.FloatTensor).cuda()
+
+                result = self.net(inputs, has_mic=True, has_cam=True, has_sod=False)
+                result = result["cam"]
+                if multi_num > 1:
+                    dataset.save_cam(idx=int(index), name="image", cam=np.asarray(image_for_crf))
+                    for key in result.keys():
+                        value = result[key].detach().cpu()
+                        value_mean = torch.mean(value, dim=0)
+                        dataset.save_cam(idx=int(index), name=key, cam=np.asarray(value_mean.squeeze()))
+
+                        value_crf = CRFTool.crf_torch(torch.unsqueeze(image_for_crf, dim=0) * 255,
+                                                      torch.unsqueeze(value_mean, dim=0), t=5)
+                        dataset.save_cam(idx=int(index), name="{}_crf".format(key), cam=np.asarray(value_crf.squeeze()))
+                        pass
+                else:
+                    for _i in range(inputs.shape[0]):
+                        _save_cam(dataset, index, result, image_for_crf, _i)
+                    pass
+
+                pass
+            pass
+
+        pass
+
+    # 训练SOD
+    def train_sod(self, epoch_num=50, start_epoch=0, model_file_name=None, save_epoch_freq=1, is_supervised=False,
+                  has_history=True, history_epoch_start=2, history_epoch_freq=1, lr=0.0001):
         dataset = self.sod_train_prepare["dataset"]
         data_loader = self.sod_train_prepare["data_loader"]
         data_batch_num = self.sod_train_prepare["data_batch_num"]
         has_f_loss = self.sod_train_prepare["has_f_loss"]
         size_sod_test = self.sod_train_prepare["size_sod_test"]
+
+        if model_file_name is not None:
+            Tools.print("Load model form {}".format(model_file_name))
+            self.load_model(model_file_name)
+            pass
 
         optimizer = optim.Adam(self.net.parameters(), lr=lr)
         for epoch in range(start_epoch, epoch_num+1):
@@ -1162,10 +1237,10 @@ class BASRunner(object):
 
                 ###########################################################################
                 # 3 评估模型
-                self.eval_sod(self.net, epoch=epoch, is_test=True,
-                              batch_size=data_loader.batch_size, size_test=size_sod_test)
-                self.eval_sod(self.net, epoch=epoch, is_test=False,
-                              batch_size=data_loader.batch_size, size_test=size_sod_test)
+                self.eval_duts(self.net, epoch=epoch, is_test=True,
+                               batch_size=data_loader.batch_size, size_test=size_sod_test)
+                self.eval_duts(self.net, epoch=epoch, is_test=False,
+                               batch_size=data_loader.batch_size, size_test=size_sod_test)
                 ###########################################################################
                 pass
             ###########################################################################
@@ -1181,35 +1256,8 @@ class BASRunner(object):
         Tools.print()
         pass
 
-    def vis_cam(self):
-        dataset = self.mic_vis_prepare["dataset"]
-        data_loader = self.mic_vis_prepare["data_loader"]
-        data_batch_num = self.mic_vis_prepare["data_batch_num"]
-
-        self.net.eval()
-        with torch.no_grad():
-            for _idx, (inputs, image_for_crf, index) in tqdm(enumerate(data_loader), total=data_batch_num):
-                inputs = inputs.type(torch.FloatTensor).cuda()
-
-                result = self.net(inputs, has_mic=True, has_cam=True, has_sod=False)
-
-                dataset.save_cam(idx=int(index), name="image", cam=np.asarray(image_for_crf))
-                for key in result["cam"].keys():
-                    value = result["cam"][key].detach().cpu()
-                    value_mean = torch.mean(value, dim=0)
-                    dataset.save_cam(idx=int(index), name=key, cam=np.asarray(value_mean.squeeze()))
-
-                    value_crf = CRFTool.crf_torch(torch.unsqueeze(image_for_crf, dim=0) * 255,
-                                                  torch.unsqueeze(value_mean, dim=0), t=5)
-                    dataset.save_cam(idx=int(index), name="{}_crf".format(key), cam=np.asarray(value_crf.squeeze()))
-                    pass
-
-                pass
-            pass
-        pass
-
     @classmethod
-    def eval_sod(cls, net, epoch=0, is_test=True, size_test=256, batch_size=16, th_num=25, beta_2=0.3, save_path=None):
+    def eval_duts(cls, net, epoch=0, is_test=True, size_test=256, batch_size=16, th_num=25, beta_2=0.3, save_path=None):
         which = "TE" if is_test else "TR"
         data_dir = '/media/ubuntu/4T/ALISURE/Data/DUTS/DUTS-{}'.format(which)
         image_dir, label_dir = 'DUTS-{}-Image'.format(which), 'DUTS-{}-Mask'.format(which)
@@ -1366,9 +1414,9 @@ def train(mic_batch_size, sod_batch_size):
     img_name_list, lbl_name_list, data_name_list = sod_data.duts_tr()
 
     # 流程控制
-    has_train_mic = True
-    has_train_sod = True
+    has_train_mic = False
     has_save_cam = True
+    has_train_sod = True
     train_sod_is_supervised = False
     train_sod_has_history = True
     mic_epoch_num = 100
@@ -1376,7 +1424,7 @@ def train(mic_batch_size, sod_batch_size):
 
     # 参数
     mic_size_train, size_cam, size_sod_train, size_sod_test = 224, 256, 320, 320
-    multi_num, label_a, label_b, has_crf, has_f_loss = 5, 0.3, 0.5, True, False
+    multi_num, label_a, label_b, has_crf, has_f_loss = 1, 0.3, 0.5, True, False
     history_epoch_start, history_epoch_freq, save_sod_epoch_freq, save_mic_epoch_freq = 2, 1, 1, 10
     cam_label_dir = "../BASNetTemp_E2E/cam/CAM_12_{}_{}_A{}".format(mic_size_train, size_cam, multi_num)
     cam_label_name = 'cam_c12_crf'
@@ -1401,18 +1449,29 @@ def train(mic_batch_size, sod_batch_size):
 
     # 训练MIC
     if has_train_mic:
-        bas_runner.train_mic(epoch_num=mic_epoch_num, start_epoch=0, save_epoch_freq=save_mic_epoch_freq, lr=0.00001)
+        model_file_name = None
+        # model_file_name = "../BASNetTemp_E2E/saved_models/R50_CAM_12_224_256_DFalse/mic_final_200.pth"
+        bas_runner.train_mic(epoch_num=mic_epoch_num, start_epoch=0, model_file_name=model_file_name,
+                             save_epoch_freq=save_mic_epoch_freq, lr=0.00001)
         pass
 
     # 保存CAM
     if has_save_cam:
-        bas_runner.vis_cam()
+        model_file_name = "../BASNetTemp_E2E/saved_models/R50_CAM_12_224_256_DFalse/mic_final_200.pth"
+        bas_runner.vis_cam(model_file_name=model_file_name)
+
+        # 计算指标
+        bas_runner.eval_by_label_predict(img_name_list, lbl_name_list, data_name_list, cam_label_dir,
+                                         cam_label_name, size_eval=None, th_num=25, beta_2=0.3, has_data_name=True)
         pass
 
     # 训练SOD
     if has_train_sod:
+        model_file_name = None
+        # model_file_name = "../BASNetTemp_E2E/saved_models/R50_CAM_12_224_256_DFalse/mic_final_200.pth"
         bas_runner.train_sod(epoch_num=sod_epoch_num, start_epoch=0, save_epoch_freq=save_sod_epoch_freq,
-                             is_supervised=train_sod_is_supervised, has_history=True, lr=0.0001,
+                             is_supervised=train_sod_is_supervised, has_history=True,
+                             lr=0.0001, model_file_name=model_file_name,
                              history_epoch_start=history_epoch_start, history_epoch_freq=history_epoch_freq)
         pass
 

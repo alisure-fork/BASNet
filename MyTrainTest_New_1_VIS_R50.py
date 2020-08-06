@@ -468,11 +468,11 @@ class BASNet(nn.Module):
 
         cam_list = []
         top_k_value, top_k_index = torch.topk(smc_logits, 1, 1)
-        for i in range(mic_feature.size()[0]):
-            cam_weight = weight_softmax[top_k_index[i]]
-            cam = cam_weight.dot(mic_feature.reshape((nc, h * w)))
-            cam = cam.reshape(1, h, w)
-            cam_list.append(cam)
+        for i in range(bz):
+            cam_weight = weight_softmax[top_k_index[i][0]]
+            cam_weight = cam_weight.view(nc, 1, 1).expand_as(mic_feature[i])
+            cam = torch.sum(torch.mul(cam_weight, mic_feature[i]), dim=0, keepdim=True)
+            cam_list.append(torch.unsqueeze(cam, 0))
             pass
         return torch.cat(cam_list)
 
@@ -778,32 +778,10 @@ class BASRunner(object):
 
 
 """
-2020-07-11 10:16:24 [E:930/1000] loss:1.161 mic1:0.497 mic2:0.364 mic3:0.300 sod:0.000
-2020-07-11 10:16:24 Train: [930] 1-1231/521
-2020-07-11 10:16:24 Train: [930] 2-1077/464
-2020-07-11 10:16:24 Train: [930] 3-973/419
-2020-07-11 10:16:25 Save Model to ../BASNetTemp/saved_models/CAM_123_224/930_train_1.172.pth
-
-2020-07-14 13:34:05 ../BASNetTemp/cam/CAM_123_224_256_AVG_1 cam_up_norm_C123_crf
-2020-07-14 13:40:06 Train avg mae=0.18007975575910706 score=0.6450108439345925
-2020-07-14 13:41:38 ../BASNetTemp/cam/CAM_123_224_256_AVG_9 cam_up_norm_C123_crf
-2020-07-14 13:47:55 Train avg mae=0.17801150496007748 score=0.6452717806037506
-2020-07-14 13:41:42 ../BASNetTemp/cam/CAM_123_224_256_AVG_30 cam_up_norm_C123_crf
-2020-07-14 13:47:43 Train avg mae=0.17759568890576982 score=0.6455211460931307
-
-2020-07-26 08:17:53 [E:999/1000] loss:1.072 mic1:0.444 mic2:0.332 mic3:0.296 sod:0.000
-2020-07-26 08:17:53 Train: [999] 1-7135/2175
-2020-07-26 08:17:53 Train: [999] 2-6100/2297
-2020-07-26 08:17:53 Train: [999] 3-5929/2481
-2020-07-26 08:17:54 Save Model to ../BASNetTemp/saved_models/CAM_123_224_256_DTrue/1000_train_1.072.pth
-2020-07-27 00:08:22 ../BASNetTemp/cam/CAM_123_224_256_A5_SFalse_DTrue cam_up_norm_C23_crf
-2020-07-27 00:11:17 Train avg mae=0.15425343497672997 score=0.29836294297909255
-
-2020-07-28 18:17:51 [E:999/1000] loss:1.154 mic1:0.474 mic2:0.368 mic3:0.312 sod:0.000
-2020-07-28 18:17:51 Train: [999] 1-1750/681
-2020-07-28 18:17:51 Train: [999] 2-1534/646
-2020-07-28 18:17:51 Train: [999] 3-1420/657
-2020-07-28 18:17:51 Save Model to ../BASNetTemp/saved_models/CAM_123_224_256_DFalse/1000_train_1.154.pth
+2020-08-06 16:45:44 [E:200/500] loss:1.091 mic1:0.588 mic2:0.503
+2020-08-06 16:45:44 Train: [200] 1-1920/851
+2020-08-06 16:45:44 Train: [200] 2-1863/840
+2020-08-06 16:45:45 Save Model to ../BASNetTemp/saved_models/R50_CAM_12_224_256_DFalse/200_train_1.091.pth
 
 
 2020-07-28 20:30:46 ../BASNetTemp/cam/CAM_123_224_256_AVG_1 cam_up_norm_C12_crf
@@ -812,37 +790,6 @@ class BASRunner(object):
 2020-07-28 20:39:44 Train avg mae=0.20597653803163998 score=0.686193559271971
 2020-07-28 20:30:31 ../BASNetTemp/cam/CAM_123_224_256_AVG_1 cam_up_norm_C123_crf
 2020-07-28 20:37:40 Train avg mae=0.18007975575910684 score=0.6447458188033726
-
-2020-07-28 20:31:04 ../BASNetTemp/cam/CAM_123_224_256_AVG_9 cam_up_norm_C12_crf
-2020-07-28 20:41:19 Train avg mae=0.18508573617764634 score=0.5669514546957682
-2020-07-28 20:31:09 ../BASNetTemp/cam/CAM_123_224_256_AVG_9 cam_up_norm_C23_crf
-2020-07-28 20:41:10 Train avg mae=0.2027546845221534 score=0.6884822742758568
-2020-07-28 20:31:00 ../BASNetTemp/cam/CAM_123_224_256_AVG_9 cam_up_norm_C123_crf
-2020-07-28 20:39:38 Train avg mae=0.17801150496007723 score=0.644987676666338
-
-2020-07-28 20:24:01 ../BASNetTemp/cam/CAM_123_224_256_A5_SFalse_DFalse cam_up_norm_C12_crf
-2020-07-28 20:26:08 Train avg mae=0.18763395561814353 score=0.493304236445042
-2020-07-28 20:21:56 ../BASNetTemp/cam/CAM_123_224_256_A5_SFalse_DFalse cam_up_norm_C23_crf
-2020-07-28 20:28:40 Train avg mae=0.18351527000009912 score=0.622681934726851
-2020-07-28 20:23:35 ../BASNetTemp/cam/CAM_123_224_256_A5_SFalse_DFalse cam_up_norm_C123_crf
-2020-07-28 20:26:06 Train avg mae=0.17520064073057032 score=0.5644434479389823
-
-2020-07-28 20:24:22 ../BASNetTemp/cam/CAM_123_224_256_A5_SFalse_DFalse cam_up_norm_C12_crf
-2020-07-28 20:25:22 Train avg mae=0.15861528231772198 score=0.3611402350558168
-2020-07-28 20:24:30 ../BASNetTemp/cam/CAM_123_224_256_A5_SFalse_DFalse cam_up_norm_C23_crf
-2020-07-28 20:25:39 Train avg mae=0.19076016670506263 score=0.4730370864863008
-2020-07-28 20:24:27 ../BASNetTemp/cam/CAM_123_224_256_A5_SFalse_DFalse cam_up_norm_C123_crf
-2020-07-28 20:25:31 Train avg mae=0.16173122906402748 score=0.41750517170681284
-"""
-
-
-"""
-1.多个增强融合
-2.多个模型融合
-3.输出正则归一化
-4.判断那些样本参加训练
-5.如何进行端到端训练
-6.Weight Sum, 修改成全连接!!!!
 """
 
 
@@ -864,21 +811,11 @@ if __name__ == '__main__':
     all_image, all_mask, all_dataset_name = sod_data.get_all_train_and_mask() if _is_all_data else sod_data.duts_tr()
 
     if _is_eval:
-        # _tra_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_1"
-        # _tra_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_9"
-        _tra_label_dir = "../BASNetTemp/cam/CAM_123_224_256_AVG_30"
+        _tra_label_dir = "../BASNetTemp/cam/R50_CAM_12__224_256_AVG_5"
         _tra_label_name = 'cam_up_norm_C12_crf'
-
-        # _tra_label_dir = "../BASNetTemp/cam/CAM_123_224_256_A1_SFalse_DTrue"
-        # _tra_label_dir = "../BASNetTemp/cam/CAM_123_224_256_A5_SFalse_DTrue"
-        # _tra_label_name = 'cam_up_norm_C23_crf'
-
-        # _tra_label_dir = "../BASNetTemp/cam/CAM_123_224_256_A5_SFalse_DFalse"
-        # _tra_label_name = 'cam_up_norm_C23_crf'
 
         Tools.print("{} {}".format(_tra_label_dir, _tra_label_name))
         _image_list, _mask_list, _dataset_list = sod_data.duts_tr()
-        # _image_list, _mask_list, _dataset_list = sod_data.duts_te()
         _has_data_name = False
         BASRunner.eval_vis(_image_list, _mask_list, _dataset_list,
                            _tra_label_dir, _tra_label_name, size_eval=_size_vis, has_data_name=_has_data_name)
@@ -893,11 +830,8 @@ if __name__ == '__main__':
         if _is_train:  # 训练
             bas_runner.train(epoch_num=500, start_epoch=0)
         else:  # 得到响应图
-            # bas_runner.load_model(model_file_name="../BASNetTemp/saved_models/CAM_123_224_256/930_train_1.172.pth")
-            # bas_runner.load_model(
-            #     model_file_name="../BASNetTemp/saved_models/CAM_123_224_256_DTrue/1000_train_1.072.pth")
             bas_runner.load_model(
-                model_file_name="../BASNetTemp/saved_models/CAM_123_224_256_DFalse/1000_train_1.154.pth")
+                model_file_name="../BASNetTemp/saved_models/R50_CAM_12_224_256_DFalse/200_train_1.091.pth")
             bas_runner.vis()
             pass
         pass
