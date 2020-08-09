@@ -433,17 +433,22 @@ class DatasetUSOD(Dataset):
                 img = np.asarray(Image.open(img_name).convert("RGB"))  # 图像
                 ann = np.asarray(Image.open(save_lbl_name).convert("L")) / 255  # 训练的输出
                 if self.has_crf:
-                    # 0.0001
-                    # 2_CAM_123_224_256_A5_SFalse_DFalse_224_256_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211
-                    # 2020-07-31 01:21:26 Test 29 avg mae=0.10352051467412994 score=0.6654844658526717
-                    # 2020-07-31 01:24:02 Train 29 avg mae=0.07711194122040814 score=0.8706896792050232
+                    # 1
                     # ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
                     # ann = (0.75 * ann + 0.25 * ann_label)
 
-                    # 不确定区域; 对不确定区域进行CRF; 修改不确定区域
-                    # 1_Morphology_Train_CAM_123_224_256_A5_SFalse_DFalse_224_256_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211
-                    # 2020-08-01 13:09:27 Test 27 avg mae=0.11535412584032331 score=0.648697955898359
-                    # 2020-08-01 13:11:38 Train 27 avg mae=0.07713918824764815 score=0.8691519831500819
+                    # 2
+                    if epoch <= 2:
+                        ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
+                        ann = (0.75 * ann + 0.25 * ann_label)
+                    else:
+                        ann, change = CRFTool.get_uncertain_area(ann, black_th=self.label_a,
+                                                                 white_th=self.label_b, ratio_th=16)
+                        ann2 = CRFTool.crf_label(img, np.expand_dims(ann, axis=0), a=self.label_a, b=self.label_b)
+                        ann[change] = ann2[change]
+                        pass
+
+                    # 3
                     # if epoch <= 10:
                     #     ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
                     #     ann = (0.75 * ann + 0.25 * ann_label)
@@ -454,9 +459,7 @@ class DatasetUSOD(Dataset):
                     #     ann[change] = ann2[change]
                     #     pass
 
-                    # 2_Morphology_Train_CAM_123_224_256_A5_SFalse_DFalse_224_256_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211
-                    # 2020-08-01 22:47:48 Test 25 avg mae=0.12813315100613096 score=0.6673295398451972
-                    # 2020-08-01 22:49:49 Train 25 avg mae=0.08134926897896962 score=0.872017064360255
+                    # 4
                     # if epoch <= 10:
                     #     ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
                     #     ann = (0.75 * ann + 0.25 * ann_label)
@@ -465,70 +468,7 @@ class DatasetUSOD(Dataset):
                     #                                              white_th=self.label_b, ratio_th=10)
                     #     ann2 = CRFTool.crf_label(img, np.expand_dims(ann, axis=0), a=self.label_a, b=self.label_b)
                     #     ann[change] = ann2[change]
-
-                    # 3_Morphology_Train_CAM_123_224_256_A5_SFalse_DFalse_224_256_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211
-                    # 2020-08-02 01:38:45 Test 15 avg mae=0.1323865410827455 score=0.6618741786757457
-                    # 2020-08-02 01:40:51 Train 15 avg mae=0.08220166247338057 score=0.8720659252577703
-                    # if epoch <= 2:
-                    #     ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
-                    #     ann = (0.75 * ann + 0.25 * ann_label)
-                    # else:
-                    #     ann, change = CRFTool.get_uncertain_area(ann, black_th=self.label_a,
-                    #                                              white_th=self.label_b, ratio_th=10)
-                    #     ann2 = CRFTool.crf_label(img, np.expand_dims(ann, axis=0), a=self.label_a, b=self.label_b)
-                    #     ann[change] = ann2[change]
-
-                    # 4
-                    # ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
-                    # ratio3, lbl = 0, None
-                    # if os.path.exists(train_lbl_name):
-                    #     lbl = np.asarray(Image.open(train_lbl_name).convert("L")) / 255  # 训练的标签
-                    #     ratio3 = CRFTool.get_ratio(lbl)
-                    # ratio1 = CRFTool.get_ratio(ann)
-                    # ratio2 = CRFTool.get_ratio(ann_label)
-                    # if ratio1 > 0.1 and ratio2 > 0.1 and ratio3 > 0.1 and np.abs(ratio1 - ratio3) < 0.05 and \
-                    #         np.abs(ratio1 - ratio2) < 0.05 and np.abs(ratio2 - ratio3) < 0.05:
-                    #     ann = 0.5 * lbl + 0.5 * (0.5 * ann + 0.5 * ann_label)
-                    # else:
-                    #     if np.abs(ratio1 - ratio2) < 0.05:
-                    #         ann = 0.5 * ann + 0.5 * ann_label
-                    #     else:
-                    #         ann = 0.75 * ann + 0.25 * ann_label
                     #     pass
-
-                    # 1_FLoss_Morphology_Train_CAM_123_224_256_A5_SFalse_DFalse_224_256_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211
-                    # loss=bce+0.1*f 31_train_0.058.pth
-                    # 2020-08-04 03:06:01 Test 31 avg mae=0.11399387341170084 score=0.6844463873396547
-                    # 2020-08-04 03:08:01 Test 31 avg mae=0.07444360389966856 score=0.8787626041157726
-
-                    # 1_FLoss_Morphology_Train_CAM_123_224_256_A5_SFalse_DFalse_320_320_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211
-                    # 23_train_0.065.pth
-                    # 2020-08-05 01:36:52 Test 23 avg mae=0.10584519406080625 score=0.6931652778949701
-                    # 2020-08-05 01:40:45 Test 23 avg mae=0.07252354135906154 score=0.8806913579074058
-                    # 3_FLoss_Morphology_Train_CAM_123_224_256_A5_SFalse_DFalse_320_320_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211
-                    # 29_train_0.062.pth
-                    # 2020-08-05 05:43:12 Test 29 avg mae=0.10267482305265915 score=0.7039479408676812
-                    # 2020-08-05 05:47:09 Test 29 avg mae=0.07275413212112405 score=0.882560829883874
-                    if epoch <= 10:
-                        ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
-                        ann = (0.75 * ann + 0.25 * ann_label)
-                    else:
-                        ann, change = CRFTool.get_uncertain_area(ann, black_th=self.label_a,
-                                                                 white_th=self.label_b, ratio_th=10)
-                        ann2 = CRFTool.crf_label(img, np.expand_dims(ann, axis=0), a=self.label_a, b=self.label_b)
-                        ann[change] = ann2[change]
-                        pass
-
-                    # 2_FLoss_Morphology_Train_CAM_123_224_256_A5_SFalse_DFalse_224_256_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211
-                    # 45_train_0.021.pth
-                    # 2020-08-04 17:00:15 Test 45 avg mae=0.10881691630042735 score=0.6741292126678432
-                    # 2020-08-04 17:03:43 Test 45 avg mae=0.07142853449860757 score=0.8794887318974295
-                    # 2_FLoss_Morphology_Train_CAM_123_224_256_A5_SFalse_DFalse_320_320_cam_up_norm_C23_crf_History_DieDai_CRF_0.3_0.5_211
-                    # 45_train_0.022.pth
-                    # 2020-08-04 20:45:27 Test 45 avg mae=0.0999465329797974 score=0.6952895536245347
-                    # 2020-08-04 20:49:32 Test 45 avg mae=0.0697628950389723 score=0.8812714221550307
-                    # ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
-                    # ann = (0.75 * ann + 0.25 * ann_label)
                     pass
 
                 imsave(Tools.new_dir(train_lbl_name), np.asarray(ann * 255, dtype=np.uint8), check_contrast=False)
@@ -707,24 +647,24 @@ class BASNet(nn.Module):
         return_layers = {'relu': 'e0', 'layer1': 'e1', 'layer2': 'e2', 'layer3': 'e3', 'layer4': 'e4'}
         self.backbone = IntermediateLayerGetter(backbone, return_layers=return_layers)
 
-        # -------------MIC-------------
-        self.mic_l2norm = MICNormalize(2)
-        self.mic_pool = nn.MaxPool2d(2, 2, ceil_mode=True)
-
-        self.mic_1_c1 = ConvBlock(2048, 2048, has_relu=True)  # 28 32 40
-        self.mic_1_c2 = ConvBlock(2048, 2048, has_relu=True)
-        self.mic_1_l1 = nn.Linear(2048, self.clustering_num_list[0])
-
-        self.mic_2_c1 = ConvBlock(2048, 2048, has_relu=True)  # 14 16 20
-        self.mic_2_c2 = ConvBlock(2048, 2048, has_relu=True)
-        self.mic_2_l1 = nn.Linear(2048, self.clustering_num_list[1])
-
         # -------------Convert-------------
         self.convert_5 = ConvBlock(2048, 512)
         self.convert_4 = ConvBlock(1024, 512)
         self.convert_3 = ConvBlock(512, 256)
         self.convert_2 = ConvBlock(256, 256)
         self.convert_1 = ConvBlock(64, 128)
+
+        # -------------MIC-------------
+        self.mic_l2norm = MICNormalize(2)
+        self.mic_pool = nn.MaxPool2d(2, 2, ceil_mode=True)
+        convert_dim = 512
+        self.mic_1_c1 = ConvBlock(convert_dim, convert_dim, has_relu=True)  # 28 32 40
+        self.mic_1_c2 = ConvBlock(convert_dim, convert_dim, has_relu=True)
+        self.mic_1_l1 = nn.Linear(convert_dim, self.clustering_num_list[0])
+
+        self.mic_2_c1 = ConvBlock(convert_dim, convert_dim, has_relu=True)  # 14 16 20
+        self.mic_2_c2 = ConvBlock(convert_dim, convert_dim, has_relu=True)
+        self.mic_2_l1 = nn.Linear(convert_dim, self.clustering_num_list[1])
 
         # -------------Decoder-------------
         self.decoder_1_b1 = resnet.BasicBlock(512, 512)  # 40
@@ -1423,6 +1363,20 @@ class BASRunner(object):
 #######################################################################################################################
 # 4 Main
 
+"""
+../BASNetTemp_E2E/saved_models/E2E_R50_1_CAM_12_224_256_A1_256_240_240_cam_c12_crf_H_CRF_0.3_0.5_411/sod_45.pth
+2020-08-07 23:28:50 Test 45 avg mae=0.09397493337496653 score=0.7018533038193493
+2020-08-07 23:32:54 Test 45 avg mae=0.06710982034617866 score=0.8916157764119035
+
+../BASNetTemp_E2E/saved_models/E2E_R50_1_CAM_12_224_256_A1_256_320_320_cam_c12_crf_H_CRF_0.3_0.5_411/sod_47.pth
+2020-08-08 04:02:57 Test 47 avg mae=0.09273115525062159 score=0.7118480586974127
+2020-08-08 04:08:39 Test 47 avg mae=0.06463708462913266 score=0.8945038943200226
+
+../BASNetTemp_E2E/saved_models/E2E_R50_2_CAM_12_224_256_A1_256_320_320_cam_c12_crf_H_CRF_0.3_0.5_211/sod_18.pth
+2020-08-08 15:54:07 Test 18 avg mae=0.10198798415007865 score=0.701357815108232
+2020-08-08 15:57:37 Test 18 avg mae=0.07011022425510667 score=0.8901714355930765
+"""
+
 
 def train(mic_batch_size, sod_batch_size):
     # 数据
@@ -1440,13 +1394,17 @@ def train(mic_batch_size, sod_batch_size):
     sod_epoch_num = 50
 
     # 参数
+    # mic_size_train, size_cam, size_sod_train, size_sod_test = 224, 256, 240, 240
+    # multi_num, label_a, label_b, has_crf, has_f_loss = 1, 0.3, 0.5, True, False
+
     mic_size_train, size_cam, size_sod_train, size_sod_test = 224, 256, 320, 320
     multi_num, label_a, label_b, has_crf, has_f_loss = 1, 0.3, 0.5, True, False
-    history_epoch_start, history_epoch_freq, save_sod_epoch_freq, save_mic_epoch_freq = 2, 1, 1, 10
+
+    history_epoch_start, history_epoch_freq, save_sod_epoch_freq, save_mic_epoch_freq = 1, 1, 1, 10
     cam_label_dir = "../BASNetTemp_E2E/cam/CAM_12_{}_{}_A{}".format(mic_size_train, size_cam, multi_num)
     cam_label_name = 'cam_c12_crf'
 
-    name_model = "E2E_R50_1{}_{}_{}{}{}{}{}_{}_{}".format(
+    name_model = "E2E_R50_2{}_{}_{}{}{}{}{}_{}_{}".format(
         "_FLoss" if has_f_loss else "", os.path.basename(cam_label_dir),
         "{}_{}_{}".format(size_cam, size_sod_train, size_sod_test), "_{}".format(cam_label_name),
         "_S" if train_sod_is_supervised else "", "_H" if train_sod_has_history else "",
@@ -1475,7 +1433,8 @@ def train(mic_batch_size, sod_batch_size):
 
         # 保存CAM
         if has_save_cam:
-            model_file_name = "../BASNetTemp_E2E/saved_models/R50_CAM_12_224_256_DFalse/mic_final_200.pth"
+            model_file_name = None
+            # model_file_name = "../BASNetTemp_E2E/saved_models/R50_CAM_12_224_256_DFalse/mic_final_200.pth"
             bas_runner.vis_cam(model_file_name=model_file_name)
 
             # 计算指标
@@ -1485,14 +1444,16 @@ def train(mic_batch_size, sod_batch_size):
 
         # 训练SOD
         if has_train_sod:
-            model_file_name = "../BASNetTemp_E2E/saved_models/R50_CAM_12_224_256_DFalse/mic_final_200.pth"
+            model_file_name = None
+            # model_file_name = "../BASNetTemp_E2E/saved_models/R50_CAM_12_224_256_DFalse/mic_final_200.pth"
             bas_runner.train_sod(epoch_num=sod_epoch_num, start_epoch=0, save_epoch_freq=save_sod_epoch_freq,
                                  is_supervised=train_sod_is_supervised, has_history=True,
                                  lr=0.0001, model_file_name=model_file_name,
                                  history_epoch_start=history_epoch_start, history_epoch_freq=history_epoch_freq)
             pass
     else:
-        model_file_name = "../BASNetTemp_E2E/saved_models/R50_CAM_12_224_256_DFalse/mic_final_200.pth"
+        model_name = "E2E_R50_1_CAM_12_224_256_A1_256_240_240_cam_c12_crf_H_CRF_0.3_0.5_411"
+        model_file_name = "../BASNetTemp_E2E/saved_models/{}/sod_45.pth".format(model_name)
         Tools.print("Load model form {}".format(model_file_name))
         bas_runner.load_model(model_file_name)
 
@@ -1502,10 +1463,11 @@ def train(mic_batch_size, sod_batch_size):
                          sod_data.sod, sod_data.thur15000, sod_data.pascal1500, sod_data.pascal_s,
                          sod_data.judd, sod_data.duts_te, sod_data.duts_tr, sod_data.cub_200_2011]:
             img_name_list, lbl_name_list, dataset_name_list = data_set()
-            Tools.print("Begin eval {}".format(dataset_name_list[0]))
-            bas_runner.eval_by_image_label(bas_runner.net, img_name_list, lbl_name_list, epoch=0,
-                                           batch_size=sod_batch_size, size_test=size_sod_test,
-                                           save_path="../BASNetTemp_E2E/eval/{}/test".format(dataset_name_list[0]))
+            Tools.print("Begin eval {} {}".format(dataset_name_list[0], size_sod_test))
+            bas_runner.eval_by_image_label(bas_runner.net, img_name_list, lbl_name_list,
+                                           epoch=0, batch_size=sod_batch_size, size_test=size_sod_test,
+                                           save_path="../BASNetTemp_E2E/eval/{}/{}/{}/test".format(
+                                               size_sod_test, model_name, dataset_name_list[0]))
             pass
         pass
 
@@ -1513,10 +1475,11 @@ def train(mic_batch_size, sod_batch_size):
 
 
 if __name__ == '__main__':
-    os.environ["CUDA_VISIBLE_DEVICES"] = "2, 3"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
     # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1"
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "2, 3"
     _mic_batch_size = 12 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
-    _sod_batch_size = 4 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
+    _sod_batch_size = 8 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
 
     train(_mic_batch_size, _sod_batch_size)
     pass
