@@ -434,22 +434,28 @@ class DatasetUSOD(Dataset):
                 ann = np.asarray(Image.open(save_lbl_name).convert("L")) / 255  # 训练的输出
                 if self.has_crf:
                     # 1
+                    # E2E_R50_52_CAM_12_224_256_A1_256_320_320_cam_c12_crf_H_CRF_0.3_0.5_111/sod_29.pth
+                    # 2020-08-10 15:12:58 Test 29 avg mae=0.09098734770705745 score=0.7143106332672082
+                    # 2020-08-10 15:16:23 Test 29 avg mae=0.06376292646269907 score=0.9013778045254351
+
+                    # E2E_R50_53_FLoss_CAM_12_224_256_A1_256_320_320_cam_c12_crf_H_CRF_0.3_0.5_111/sod_23.pth
+                    # F loss
+                    # 2020-08-10 23:38:15 Test 23 avg mae=0.09834574701584828 score=0.6917040112039919
+                    # 2020-08-10 23:41:55 Test 23 avg mae=0.08204551649590333 score=0.8938418660886055
+
+                    # E2E_R50_54_CAM_12_224_256_A1_256_320_320_cam_c12_crf_H_CRF_0.3_0.5_111/sod_41.pth
+                    # lr decay
+                    # 2020-08-11 09:17:23 Test 41 avg mae=0.0886142789890432 score=0.7235586773565861
+                    # 2020-08-11 09:20:53 Test 41 avg mae=0.058555378223007375 score=0.9041142600123854
                     # ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
                     # ann = (0.75 * ann + 0.25 * ann_label)
 
                     # 2
-                    if epoch <= 2:
-                        ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
-                        ann = (0.75 * ann + 0.25 * ann_label)
-                    else:
-                        ann, change = CRFTool.get_uncertain_area(ann, black_th=self.label_a,
-                                                                 white_th=self.label_b, ratio_th=16)
-                        ann2 = CRFTool.crf_label(img, np.expand_dims(ann, axis=0), a=self.label_a, b=self.label_b)
-                        ann[change] = ann2[change]
-                        pass
+                    # ann_label = CRFTool.crf_label(img, np.expand_dims(ann, axis=0), a=self.label_a, b=self.label_b)
+                    # ann = (0.75 * ann + 0.25 * ann_label)
 
                     # 3
-                    # if epoch <= 10:
+                    # if epoch <= 2:
                     #     ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
                     #     ann = (0.75 * ann + 0.25 * ann_label)
                     # else:
@@ -460,15 +466,19 @@ class DatasetUSOD(Dataset):
                     #     pass
 
                     # 4
-                    # if epoch <= 10:
-                    #     ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
-                    #     ann = (0.75 * ann + 0.25 * ann_label)
-                    # else:
-                    #     ann, change = CRFTool.get_uncertain_area(ann, black_th=self.label_a,
-                    #                                              white_th=self.label_b, ratio_th=10)
-                    #     ann2 = CRFTool.crf_label(img, np.expand_dims(ann, axis=0), a=self.label_a, b=self.label_b)
-                    #     ann[change] = ann2[change]
-                    #     pass
+                    if epoch <= 15 or epoch > 30:
+                        ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
+                        ann = (0.75 * ann + 0.25 * ann_label)
+                    elif epoch <= 30:
+                        ratio_th = int(10 - (epoch - 15) / 1.5)
+                        ratio_th = ratio_th if ratio_th >= 1 else 1
+
+                        ann, change = CRFTool.get_uncertain_area(ann, black_th=self.label_a,
+                                                                 white_th=self.label_b, ratio_th=ratio_th)
+                        ann2 = CRFTool.crf_label(img, np.expand_dims(ann, axis=0), a=self.label_a, b=self.label_b)
+                        ann[change] = ann2[change]
+                        pass
+
                     pass
 
                 imsave(Tools.new_dir(train_lbl_name), np.asarray(ann * 255, dtype=np.uint8), check_contrast=False)
@@ -1091,6 +1101,14 @@ class BASRunner(object):
 
         pass
 
+    @staticmethod
+    def _adjust_learning_rate(optimizer, epoch, lr, e=0.9, start_epoch=30):
+        if epoch > start_epoch:
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = lr * np.power(e, epoch - start_epoch)
+                pass
+        pass
+
     # 训练SOD
     def train_sod(self, epoch_num=50, start_epoch=0, model_file_name=None, save_epoch_freq=1, is_supervised=False,
                   has_history=True, history_epoch_start=2, history_epoch_freq=1, lr=0.0001):
@@ -1108,6 +1126,7 @@ class BASRunner(object):
         optimizer = optim.Adam(self.net.parameters(), lr=lr)
         for epoch in range(start_epoch, epoch_num+1):
             Tools.print()
+            self._adjust_learning_rate(optimizer, epoch, lr, start_epoch=30)
             Tools.print('Epoch:{:03d}, lr={:.5f}'.format(epoch, optimizer.param_groups[0]['lr']))
 
             ###########################################################################
@@ -1378,6 +1397,95 @@ class BASRunner(object):
 """
 
 
+"""
+/home/ubuntu/anaconda3/envs/alisure36torch/bin/python /media/ubuntu/4T/ALISURE/USOD/BASNet/MyTrainTest_New_3_E2E.py
+2020-08-10 16:47:04 train images: 10553
+2020-08-10 16:47:05 DatasetUSOD: size_train=320
+2020-08-10 16:47:06 Success Load Unsupervised pre train from ./pre_model/MoCov2.pth
+2020-08-10 16:47:22 Load model form ../BASNetTemp_E2E/saved_models/E2E_R50_52_CAM_12_224_256_A1_256_320_320_cam_c12_crf_H_CRF_0.3_0.5_111/sod_29.pth
+2020-08-10 16:47:23 restore from ../BASNetTemp_E2E/saved_models/E2E_R50_52_CAM_12_224_256_A1_256_320_320_cam_c12_crf_H_CRF_0.3_0.5_111/sod_29.pth
+2020-08-10 16:47:23 Begin eval CSSD 320
+2020-08-10 16:47:36 Test 0 avg mae=0.06641534959467557 score=0.8964471958190837
+2020-08-10 16:47:36 Begin eval ECSSD 320
+2020-08-10 16:48:04 Test 0 avg mae=0.09437845854295625 score=0.8516763608617447
+2020-08-10 16:48:04 Begin eval ASD 320
+2020-08-10 16:48:32 Test 0 avg mae=0.03103637614006561 score=0.9324128527747216
+2020-08-10 16:48:32 Begin eval MSRA10K 320
+2020-08-10 16:53:06 Test 0 avg mae=0.05082927868366242 score=0.9075040025787761
+2020-08-10 16:53:06 Begin eval MSRA-B 320
+2020-08-10 16:55:22 Test 0 avg mae=0.05216425020521441 score=0.8920480088838162
+2020-08-10 16:55:22 Begin eval SED2 320
+2020-08-10 16:55:27 Test 0 avg mae=0.10561412679297584 score=0.8252037479800354
+2020-08-10 16:55:27 Begin eval DUT-OMRON 320
+2020-08-10 16:57:51 Test 0 avg mae=0.0764440885303836 score=0.7763795778521467
+2020-08-10 16:57:51 Begin eval HKU-IS 320
+2020-08-10 16:59:54 Test 0 avg mae=0.07611641488808522 score=0.8347665904223385
+2020-08-10 16:59:54 Begin eval SOD 320
+2020-08-10 17:00:05 Test 0 avg mae=0.18468468949982994 score=0.7361671032860957
+2020-08-10 17:00:05 Begin eval THUR15000-Butterfly 320
+2020-08-10 17:03:01 Test 0 avg mae=0.08388529848307372 score=0.7388173530696376
+2020-08-10 17:03:01 Begin eval PASCAL1500 320
+2020-08-10 17:03:44 Test 0 avg mae=0.10157587759672328 score=0.7772667603178893
+2020-08-10 17:03:44 Begin eval PASCAL-S 320
+2020-08-10 17:04:10 Test 0 avg mae=0.13853593846714055 score=0.7533637254895215
+2020-08-10 17:04:10 Begin eval Judd 320
+2020-08-10 17:04:41 Test 0 avg mae=0.13300316257957825 score=0.5950713043199602
+2020-08-10 17:04:41 Begin eval DUTS-TE 320
+2020-08-10 17:06:59 Test 0 avg mae=0.09104125406949004 score=0.7052402966977283
+2020-08-10 17:06:59 Begin eval DUTS-TR 320
+2020-08-10 17:11:37 Test 0 avg mae=0.06376214164422091 score=0.8964237915831634
+2020-08-10 17:11:37 Begin eval CUB-200-2011 320
+2020-08-10 17:16:54 Test 0 avg mae=0.04975149012960524 score=0.8326531540389689
+
+Process finished with exit code 0
+
+"""
+
+
+"""
+/home/ubuntu/anaconda3/envs/alisure36torch/bin/python /media/ubuntu/4T/ALISURE/USOD/BASNet/MyTrainTest_New_3_E2E.py
+2020-08-11 11:16:23 train images: 10553
+2020-08-11 11:16:24 DatasetUSOD: size_train=320
+2020-08-11 11:16:25 Success Load Unsupervised pre train from ./pre_model/MoCov2.pth
+2020-08-11 11:17:03 Load model form ../BASNetTemp_E2E/saved_models/E2E_R50_54_CAM_12_224_256_A1_256_320_320_cam_c12_crf_H_CRF_0.3_0.5_111/sod_41.pth
+2020-08-11 11:17:03 restore from ../BASNetTemp_E2E/saved_models/E2E_R50_54_CAM_12_224_256_A1_256_320_320_cam_c12_crf_H_CRF_0.3_0.5_111/sod_41.pth
+2020-08-11 11:17:03 Begin eval CSSD 320
+2020-08-11 11:18:09 Test 0 avg mae=0.06123341863545088 score=0.8972040504684442
+2020-08-11 11:18:09 Begin eval ECSSD 320
+2020-08-11 11:18:36 Test 0 avg mae=0.08576142804194538 score=0.8571564643298396
+2020-08-11 11:18:36 Begin eval ASD 320
+2020-08-11 11:19:03 Test 0 avg mae=0.03082757583627152 score=0.9269228123321578
+2020-08-11 11:19:04 Begin eval MSRA10K 320
+2020-08-11 11:23:47 Test 0 avg mae=0.0467939906835556 score=0.9099989345016014
+2020-08-11 11:23:47 Begin eval MSRA-B 320
+2020-08-11 11:25:59 Test 0 avg mae=0.048737608300992094 score=0.8953633125581038
+2020-08-11 11:25:59 Begin eval SED2 320
+2020-08-11 11:26:11 Test 0 avg mae=0.08935124001332692 score=0.8409925161521241
+2020-08-11 11:26:11 Begin eval DUT-OMRON 320
+2020-08-11 11:28:37 Test 0 avg mae=0.07653751499351148 score=0.7753613363713566
+2020-08-11 11:28:37 Begin eval HKU-IS 320
+2020-08-11 11:30:36 Test 0 avg mae=0.06953853451171153 score=0.8415979395262111
+2020-08-11 11:30:36 Begin eval SOD 320
+2020-08-11 11:30:54 Test 0 avg mae=0.176586352288723 score=0.7390200650053829
+2020-08-11 11:30:54 Begin eval THUR15000-Butterfly 320
+2020-08-11 11:33:47 Test 0 avg mae=0.0827751415853317 score=0.7461239742752215
+2020-08-11 11:33:47 Begin eval PASCAL1500 320
+2020-08-11 11:34:30 Test 0 avg mae=0.0925332700556263 score=0.7899130985053977
+2020-08-11 11:34:30 Begin eval PASCAL-S 320
+2020-08-11 11:35:02 Test 0 avg mae=0.12966213292545742 score=0.7609180275204515
+2020-08-11 11:35:02 Begin eval Judd 320
+2020-08-11 11:35:32 Test 0 avg mae=0.13407025564658015 score=0.592518990353439
+2020-08-11 11:35:32 Begin eval DUTS-TE 320
+2020-08-11 11:37:47 Test 0 avg mae=0.08867833954964284 score=0.7127342376070377
+2020-08-11 11:37:48 Begin eval DUTS-TR 320
+2020-08-11 11:42:24 Test 0 avg mae=0.05855378706262193 score=0.8993162879195974
+2020-08-11 11:42:24 Begin eval CUB-200-2011 320
+2020-08-11 11:47:39 Test 0 avg mae=0.048635533903415844 score=0.8365654758500304
+
+Process finished with exit code 0
+"""
+
+
 def train(mic_batch_size, sod_batch_size):
     # 数据
     sod_data = SODData(data_root_path="/media/ubuntu/4T/ALISURE/Data/SOD")
@@ -1394,9 +1502,7 @@ def train(mic_batch_size, sod_batch_size):
     sod_epoch_num = 50
 
     # 参数
-    # mic_size_train, size_cam, size_sod_train, size_sod_test = 224, 256, 240, 240
-    # multi_num, label_a, label_b, has_crf, has_f_loss = 1, 0.3, 0.5, True, False
-
+    # mic_size_train, size_cam, size_sod_train, size_sod_test = 224, 256, 240, 256
     mic_size_train, size_cam, size_sod_train, size_sod_test = 224, 256, 320, 320
     multi_num, label_a, label_b, has_crf, has_f_loss = 1, 0.3, 0.5, True, False
 
@@ -1404,7 +1510,7 @@ def train(mic_batch_size, sod_batch_size):
     cam_label_dir = "../BASNetTemp_E2E/cam/CAM_12_{}_{}_A{}".format(mic_size_train, size_cam, multi_num)
     cam_label_name = 'cam_c12_crf'
 
-    name_model = "E2E_R50_2{}_{}_{}{}{}{}{}_{}_{}".format(
+    name_model = "E2E_R50_55{}_{}_{}{}{}{}{}_{}_{}".format(
         "_FLoss" if has_f_loss else "", os.path.basename(cam_label_dir),
         "{}_{}_{}".format(size_cam, size_sod_train, size_sod_test), "_{}".format(cam_label_name),
         "_S" if train_sod_is_supervised else "", "_H" if train_sod_has_history else "",
@@ -1452,8 +1558,8 @@ def train(mic_batch_size, sod_batch_size):
                                  history_epoch_start=history_epoch_start, history_epoch_freq=history_epoch_freq)
             pass
     else:
-        model_name = "E2E_R50_1_CAM_12_224_256_A1_256_240_240_cam_c12_crf_H_CRF_0.3_0.5_411"
-        model_file_name = "../BASNetTemp_E2E/saved_models/{}/sod_45.pth".format(model_name)
+        model_name = "E2E_R50_55_CAM_12_224_256_A1_256_320_320_cam_c12_crf_H_CRF_0.3_0.5_111"
+        model_file_name = "../BASNetTemp_E2E/saved_models/{}/sod_41.pth".format(model_name)
         Tools.print("Load model form {}".format(model_file_name))
         bas_runner.load_model(model_file_name)
 
@@ -1476,8 +1582,9 @@ def train(mic_batch_size, sod_batch_size):
 
 if __name__ == '__main__':
     os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2"
     # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1"
-    # os.environ["CUDA_VISIBLE_DEVICES"] = "2, 3"
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "3"
     _mic_batch_size = 12 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
     _sod_batch_size = 8 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
 
