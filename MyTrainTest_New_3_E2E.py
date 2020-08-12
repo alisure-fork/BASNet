@@ -447,8 +447,8 @@ class DatasetUSOD(Dataset):
                     # lr decay
                     # 2020-08-11 09:17:23 Test 41 avg mae=0.0886142789890432 score=0.7235586773565861
                     # 2020-08-11 09:20:53 Test 41 avg mae=0.058555378223007375 score=0.9041142600123854
-                    # ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
-                    # ann = (0.75 * ann + 0.25 * ann_label)
+                    ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
+                    ann = (0.75 * ann + 0.25 * ann_label)
 
                     # 2
                     # ann_label = CRFTool.crf_label(img, np.expand_dims(ann, axis=0), a=self.label_a, b=self.label_b)
@@ -466,18 +466,21 @@ class DatasetUSOD(Dataset):
                     #     pass
 
                     # 4
-                    if epoch <= 15 or epoch > 30:
-                        ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
-                        ann = (0.75 * ann + 0.25 * ann_label)
-                    elif epoch <= 30:
-                        ratio_th = int(10 - (epoch - 15) / 1.5)
-                        ratio_th = ratio_th if ratio_th >= 1 else 1
-
-                        ann, change = CRFTool.get_uncertain_area(ann, black_th=self.label_a,
-                                                                 white_th=self.label_b, ratio_th=ratio_th)
-                        ann2 = CRFTool.crf_label(img, np.expand_dims(ann, axis=0), a=self.label_a, b=self.label_b)
-                        ann[change] = ann2[change]
-                        pass
+                    # E2E_R50_55_CAM_12_224_256_A1_256_320_320_cam_c12_crf_H_CRF_0.3_0.5_111/sod_26.pth
+                    # 2020-08-12 04:50:16 Test 26 avg mae=0.0934651192987249 score=0.7288557277777711
+                    # 2020-08-12 04:54:05 Test 26 avg mae=0.0623184949752282 score=0.900374185683203
+                    # if epoch <= 20:
+                    #     ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
+                    #     ann = (0.75 * ann + 0.25 * ann_label)
+                    # else:
+                    #     ratio_th = int(10 - (epoch - 20) / 3)
+                    #     ratio_th = ratio_th if ratio_th >= 1 else 1
+                    #
+                    #     ann, change = CRFTool.get_uncertain_area(ann, black_th=self.label_a,
+                    #                                              white_th=self.label_b, ratio_th=ratio_th)
+                    #     ann2 = CRFTool.crf_label(img, np.expand_dims(ann, axis=0), a=self.label_a, b=self.label_b)
+                    #     ann[change] = ann2[change]
+                    #     pass
 
                     pass
 
@@ -919,6 +922,8 @@ class BASRunner(object):
         result["his_train_lbl_name_list"] = his_train_lbl_name_list
         result["his_save_lbl_name_list"] = his_save_lbl_name_list
         result["size_sod_test"] = size_sod_test
+        result["img_name_list"] = img_name_list
+        result["lbl_name_list"] = lbl_name_list
 
         dataset_sod = DatasetUSOD(img_name_list=img_name_list, lab_name_list=lbl_name_list,
                                   cam_name_list=cam_lbl_name_list, his_lbl_name_list=his_train_lbl_name_list,
@@ -1117,6 +1122,8 @@ class BASRunner(object):
         data_batch_num = self.sod_train_prepare["data_batch_num"]
         has_f_loss = self.sod_train_prepare["has_f_loss"]
         size_sod_test = self.sod_train_prepare["size_sod_test"]
+        img_name_list = self.sod_train_prepare["img_name_list"]
+        lbl_name_list = self.sod_train_prepare["lbl_name_list"]
 
         if model_file_name is not None:
             Tools.print("Load model form {}".format(model_file_name))
@@ -1197,8 +1204,10 @@ class BASRunner(object):
 
                 ###########################################################################
                 # 3 评估模型
-                self.eval_duts(self.net, epoch=epoch, is_test=True,
-                               batch_size=data_loader.batch_size, size_test=size_sod_test)
+                # self.eval_duts(self.net, epoch=epoch, is_test=True,
+                #                batch_size=data_loader.batch_size, size_test=size_sod_test)
+                self.eval_by_image_label(self.net, img_name_list, lbl_name_list, epoch=epoch,
+                                         size_test=size_sod_test, batch_size=data_loader.batch_size)
                 self.eval_duts(self.net, epoch=epoch, is_test=False,
                                batch_size=data_loader.batch_size, size_test=size_sod_test)
                 ###########################################################################
@@ -1489,7 +1498,10 @@ Process finished with exit code 0
 def train(mic_batch_size, sod_batch_size):
     # 数据
     sod_data = SODData(data_root_path="/media/ubuntu/4T/ALISURE/Data/SOD")
-    img_name_list, lbl_name_list, data_name_list = sod_data.duts_tr()
+    # img_name_list, lbl_name_list, data_name_list = sod_data.duts_tr()
+    img_name_list, lbl_name_list, data_name_list = sod_data.msra10k()
+
+    save_root_dir = "../BASNetTemp_E2E/{}".format(data_name_list[0])
 
     # 流程控制
     is_train = True
@@ -1507,18 +1519,18 @@ def train(mic_batch_size, sod_batch_size):
     multi_num, label_a, label_b, has_crf, has_f_loss = 1, 0.3, 0.5, True, False
 
     history_epoch_start, history_epoch_freq, save_sod_epoch_freq, save_mic_epoch_freq = 1, 1, 1, 10
-    cam_label_dir = "../BASNetTemp_E2E/cam/CAM_12_{}_{}_A{}".format(mic_size_train, size_cam, multi_num)
+    cam_label_dir = "{}/cam/CAM_12_{}_{}_A{}".format(save_root_dir, mic_size_train, size_cam, multi_num)
     cam_label_name = 'cam_c12_crf'
 
-    name_model = "E2E_R50_55{}_{}_{}{}{}{}{}_{}_{}".format(
+    name_model = "E2E_R50_10{}_{}_{}{}{}{}{}_{}_{}".format(
         "_FLoss" if has_f_loss else "", os.path.basename(cam_label_dir),
         "{}_{}_{}".format(size_cam, size_sod_train, size_sod_test), "_{}".format(cam_label_name),
         "_S" if train_sod_is_supervised else "", "_H" if train_sod_has_history else "",
         "_CRF" if has_crf else "",  "{}_{}".format(label_a, label_b),
         "{}{}{}".format(history_epoch_start, history_epoch_freq, save_sod_epoch_freq))
 
-    his_label_dir = "../BASNetTemp_E2E/his/{}".format(name_model)
-    model_dir = "../BASNetTemp_E2E/saved_models/{}".format(name_model)
+    his_label_dir = "{}/his/{}".format(save_root_dir, name_model)
+    model_dir = "{}/saved_models/{}".format(save_root_dir, name_model)
 
     bas_runner = BASRunner(
         model_dir=model_dir, clustering_num_1=512, clustering_num_2=512, clustering_ratio_1=1, clustering_ratio_2=2,
@@ -1581,11 +1593,11 @@ def train(mic_batch_size, sod_batch_size):
 
 
 if __name__ == '__main__':
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
     # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2"
-    # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1"
     # os.environ["CUDA_VISIBLE_DEVICES"] = "3"
-    _mic_batch_size = 12 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
+    _mic_batch_size = 16 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
     _sod_batch_size = 8 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
 
     train(_mic_batch_size, _sod_batch_size)
