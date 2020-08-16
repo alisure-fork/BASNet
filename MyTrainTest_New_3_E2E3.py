@@ -953,9 +953,6 @@ class BASRunner(object):
 
         for epoch in range(start_epoch, epoch_num):
             Tools.print()
-            if epoch > epoch_num * 3 // 4:
-                optimizer = optim.Adam(self.net.parameters(), lr=lr / 10, betas=(0.9, 0.999), weight_decay=0)
-                pass
             Tools.print('Epoch:{:03d}, lr={:.5f}'.format(epoch, optimizer.param_groups[0]['lr']))
 
             ###########################################################################
@@ -1540,7 +1537,7 @@ def train(mic_batch_size, sod_batch_size):
     img_name_list, lbl_name_list, data_name_list = sod_data.duts_tr()
     # img_name_list, lbl_name_list, data_name_list = sod_data.msra10k()
 
-    save_root_dir = "../BASNetTemp_E2E3/{}2".format(data_name_list[0])
+    save_root_dir = "../BASNetTemp_E2E3/{}3".format(data_name_list[0])
 
     # 流程控制
     is_train = True
@@ -1549,7 +1546,7 @@ def train(mic_batch_size, sod_batch_size):
     has_train_sod = True
     train_sod_is_supervised = False
     train_sod_has_history = True
-    mic_epoch_num = 400
+    mic_epoch_num = 300
     sod_epoch_num = 50
 
     # 参数
@@ -1633,9 +1630,10 @@ def train(mic_batch_size, sod_batch_size):
 
 
 if __name__ == '__main__':
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
     # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2"
     # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "2, 3"
     # os.environ["CUDA_VISIBLE_DEVICES"] = "3"
     _mic_batch_size = 64 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
     _sod_batch_size = 7 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
