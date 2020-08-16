@@ -677,10 +677,8 @@ class BASNet(nn.Module):
         self.convert_1 = ConvBlock(64, 128)
 
         # -------------MIC-------------
-        convert_dim = 2048
-        self.mic_c1 = ConvBlock(convert_dim, convert_dim, has_relu=True)  # 28 32 40
-        self.mic_c2 = ConvBlock(convert_dim, convert_dim, has_relu=True)
-        self.mic_l1 = nn.Linear(convert_dim, self.clustering_num)
+        self.mic_c1 = ConvBlock(2048, 2048, has_relu=True)  # 28 32 40
+        self.mic_l1 = nn.Linear(2048, self.clustering_num)
         self.mic_l2norm = MICNormalize(2)
 
         # -------------Decoder-------------
@@ -709,13 +707,13 @@ class BASNet(nn.Module):
         result = {}
 
         # -------------Encoder-------------
-        feature = self.backbone(x)  # (64, 160), (256, 80), (512, 40), (1024, 40), (2048, 40)
+        feature = self.backbone(x)  # (64, 160), (256, 80), (512, 40), (1024, 20), (2048, 10)
 
         # -------------MIC-------------
         if has_mic:
-            e4 = feature["e4"]  # (2048, 40)
+            e4 = feature["e4"]  # (2048, 10)
 
-            mic_feature = self.mic_c2(self.mic_c1(e4))  # (512, 40)
+            mic_feature = self.mic_c1(e4)  # (512, 10)
             mic_1x1 = F.adaptive_avg_pool2d(mic_feature, output_size=(1, 1)).view((mic_feature.size()[0], -1))
             smc_logits = self.mic_l1(mic_1x1)
             smc_l2norm = self.mic_l2norm(smc_logits)
@@ -955,6 +953,9 @@ class BASRunner(object):
 
         for epoch in range(start_epoch, epoch_num):
             Tools.print()
+            if epoch > epoch_num * 3 // 4:
+                optimizer = optim.Adam(self.net.parameters(), lr=lr / 10, betas=(0.9, 0.999), weight_decay=0)
+                pass
             Tools.print('Epoch:{:03d}, lr={:.5f}'.format(epoch, optimizer.param_groups[0]['lr']))
 
             ###########################################################################
@@ -1527,22 +1528,28 @@ Process finished with exit code 0
 """
 
 
+"""
+2020-08-16 15:03:04 Test 31 avg mae=0.048352293784005775 score=0.8657299014654163
+2020-08-16 15:06:30 Test 31 avg mae=0.011440804680260961 score=0.9845271974918457
+"""
+
+
 def train(mic_batch_size, sod_batch_size):
     # 数据
     sod_data = SODData(data_root_path="/media/ubuntu/4T/ALISURE/Data/SOD")
     img_name_list, lbl_name_list, data_name_list = sod_data.duts_tr()
     # img_name_list, lbl_name_list, data_name_list = sod_data.msra10k()
 
-    save_root_dir = "../BASNetTemp_E2E3/{}".format(data_name_list[0])
+    save_root_dir = "../BASNetTemp_E2E3/{}2".format(data_name_list[0])
 
     # 流程控制
-    is_train = False
-    has_train_mic = False
-    has_save_cam = False
+    is_train = True
+    has_train_mic = True
+    has_save_cam = True
     has_train_sod = True
     train_sod_is_supervised = False
     train_sod_has_history = True
-    mic_epoch_num = 500
+    mic_epoch_num = 400
     sod_epoch_num = 50
 
     # 参数
@@ -1594,8 +1601,8 @@ def train(mic_batch_size, sod_batch_size):
 
         # 训练SOD
         if has_train_sod:
-            # model_file_name = None
-            model_file_name = "../BASNetTemp_E2E3/DUTS-TR/saved_models/E2E_R50_10_CAM_224_256_A1_256_320_320_cam_crf_H_CRF_0.3_0.5_111/mic_final_300.pth"
+            model_file_name = None
+            # model_file_name = "../BASNetTemp_E2E3/DUTS-TR/saved_models/E2E_R50_10_CAM_224_256_A1_256_320_320_cam_crf_H_CRF_0.3_0.5_111/mic_final_300.pth"
             bas_runner.train_sod(epoch_num=sod_epoch_num, start_epoch=0, save_epoch_freq=save_sod_epoch_freq,
                                  is_supervised=train_sod_is_supervised, has_history=True,
                                  lr=0.0001, model_file_name=model_file_name,
@@ -1626,11 +1633,11 @@ def train(mic_batch_size, sod_batch_size):
 
 
 if __name__ == '__main__':
-    # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
     # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2"
     # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1"
-    os.environ["CUDA_VISIBLE_DEVICES"] = "3"
-    _mic_batch_size = 48 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+    _mic_batch_size = 64 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
     _sod_batch_size = 7 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
 
     train(_mic_batch_size, _sod_batch_size)
