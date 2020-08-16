@@ -255,6 +255,10 @@ class DatasetCAM(Dataset):
                                   ColorJitter(0.4, 0.4, 0.4, 0.4), RandomGrayscale(p=0.2),
                                   RandomHorizontalFlip(), ToTensor(),
                                   Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))])
+        # self.transform = Compose([FixedResized(size_train, size_train),
+        #                           ColorJitter(0.4, 0.4, 0.4, 0.4), RandomGrayscale(p=0.2),
+        #                           RandomHorizontalFlip(), ToTensor(),
+        #                           Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))])
         pass
 
     def __len__(self):
@@ -347,6 +351,11 @@ class DatasetEval(object):
         if self.size_eval is not None:
             label = label.resize((self.size_eval, self.size_eval))
             label2 = label2.resize((self.size_eval, self.size_eval))
+            pass
+        else:
+            if label.size[0] != label2.size[0] or label.size[1] != label2.size[1]:
+                label2 = label2.resize(label.size)
+                pass
             pass
 
         label = np.asarray(label) / 255
@@ -647,14 +656,14 @@ class MICProduceClass(object):
 
 class BASNet(nn.Module):
 
-    def __init__(self, clustering_num_list=None, is_supervised_pre_train=False,
+    def __init__(self, clustering_num=None, is_supervised_pre_train=False,
                  is_unsupervised_pre_train=True, unsupervised_pre_train_path="./pre_model/MoCov2.pth"):
         super(BASNet, self).__init__()
-        self.clustering_num_list = list([256, 512]) if clustering_num_list is None else clustering_num_list
+        self.clustering_num = 256 if clustering_num is None else clustering_num
 
         # -------------Encoder--------------
         backbone = resnet.__dict__["resnet50"](pretrained=is_supervised_pre_train,
-                                               replace_stride_with_dilation=[False, True, True])
+                                               replace_stride_with_dilation=[False, False, False])
         if is_unsupervised_pre_train:
             backbone = self.load_unsupervised_pre_train(backbone, unsupervised_pre_train_path)
         return_layers = {'relu': 'e0', 'layer1': 'e1', 'layer2': 'e2', 'layer3': 'e3', 'layer4': 'e4'}
@@ -668,17 +677,11 @@ class BASNet(nn.Module):
         self.convert_1 = ConvBlock(64, 128)
 
         # -------------MIC-------------
-        convert_dim = 512
-        self.convert_mic = ConvBlock(2048, convert_dim)
+        convert_dim = 2048
+        self.mic_c1 = ConvBlock(convert_dim, convert_dim, has_relu=True)  # 28 32 40
+        self.mic_c2 = ConvBlock(convert_dim, convert_dim, has_relu=True)
+        self.mic_l1 = nn.Linear(convert_dim, self.clustering_num)
         self.mic_l2norm = MICNormalize(2)
-        self.mic_pool = nn.MaxPool2d(2, 2, ceil_mode=True)
-        self.mic_1_c1 = ConvBlock(convert_dim, convert_dim, has_relu=True)  # 28 32 40
-        self.mic_1_c2 = ConvBlock(convert_dim, convert_dim, has_relu=True)
-        self.mic_1_l1 = nn.Linear(convert_dim, self.clustering_num_list[0])
-
-        self.mic_2_c1 = ConvBlock(convert_dim, convert_dim, has_relu=True)  # 14 16 20
-        self.mic_2_c2 = ConvBlock(convert_dim, convert_dim, has_relu=True)
-        self.mic_2_l1 = nn.Linear(convert_dim, self.clustering_num_list[1])
 
         # -------------Decoder-------------
         self.decoder_1_b1 = resnet.BasicBlock(512, 512)  # 40
@@ -711,34 +714,21 @@ class BASNet(nn.Module):
         # -------------MIC-------------
         if has_mic:
             e4 = feature["e4"]  # (2048, 40)
-            e4 = self.convert_mic(e4)  # (512, 40)
 
-            mic_1_feature = self.mic_1_c2(self.mic_1_c1(e4))  # (512, 40)
-            mic_1_1x1 = F.adaptive_avg_pool2d(mic_1_feature, output_size=(1, 1)).view((mic_1_feature.size()[0], -1))
-            smc_logits_1 = self.mic_1_l1(mic_1_1x1)
-            smc_l2norm_1 = self.mic_l2norm(smc_logits_1)
+            mic_feature = self.mic_c2(self.mic_c1(e4))  # (512, 40)
+            mic_1x1 = F.adaptive_avg_pool2d(mic_feature, output_size=(1, 1)).view((mic_feature.size()[0], -1))
+            smc_logits = self.mic_l1(mic_1x1)
+            smc_l2norm = self.mic_l2norm(smc_logits)
 
-            mic_2_feature = self.mic_2_c2(self.mic_2_c1(self.mic_pool(mic_1_feature)))  # (512, 20)
-            mic_2_1x1 = F.adaptive_avg_pool2d(mic_2_feature, output_size=(1, 1)).view((mic_2_feature.size()[0], -1))
-            smc_logits_2 = self.mic_2_l1(mic_2_1x1)
-            smc_l2norm_2 = self.mic_l2norm(smc_logits_2)
-
-            return_mic = {"m1": {"smc_logits": smc_logits_1, "smc_l2norm": smc_l2norm_1},
-                          "m2": {"smc_logits": smc_logits_2, "smc_l2norm": smc_l2norm_2}}
+            return_mic = {"smc_logits": smc_logits, "smc_l2norm": smc_l2norm}
             result["mic"] = return_mic
 
             if has_cam:
-                cam_1 = self.cluster_activation_map(smc_logits_1, mic_1_feature, self.mic_1_l1.weight)  # 簇激活图
-                cam_1 = self._feature_norm(cam_1)
-                cam_1 = self._up_to_target(cam_1, x)
+                cam = self.cluster_activation_map(smc_logits, mic_feature, self.mic_l1.weight)  # 簇激活图
+                cam = self._feature_norm(cam)
+                cam = self._up_to_target(cam, x)
 
-                cam_2 = self.cluster_activation_map(smc_logits_2, mic_2_feature, self.mic_2_l1.weight)  # 簇激活图
-                cam_2 = self._feature_norm(cam_2)
-                cam_2 = self._up_to_target(cam_2, cam_1)
-
-                cam_12 = (cam_1 + cam_2) / 2
-
-                result["cam"] = {"cam_c1": cam_1, "cam_c2": cam_2, "cam_c12": cam_12}
+                result["cam"] = {"cam": cam}
                 pass
 
             pass
@@ -829,15 +819,14 @@ class BASNet(nn.Module):
 
 class BASRunner(object):
 
-    def __init__(self, model_dir, clustering_num_1, clustering_num_2, clustering_ratio_1,
-                 clustering_ratio_2, img_name_list, lbl_name_list, cam_label_dir, his_label_dir, cam_label_name,
+    def __init__(self, model_dir, clustering_num, clustering_ratio,
+                 img_name_list, lbl_name_list, cam_label_dir, his_label_dir, cam_label_name,
                  mic_size_train, data_name_list, has_f_loss=False, has_crf=False, mic_batch_size=8, sod_batch_size=8,
                  size_cam=256, size_sod_train=320, size_sod_test=320, multi_num=5, label_a=0.3, label_b=0.5):
         self.model_dir = model_dir
 
         self.mic_train_prepare = self._mic_train_prepare(
-            clustering_num_1=clustering_num_1, clustering_num_2=clustering_num_2,
-            clustering_ratio_1=clustering_ratio_1,  clustering_ratio_2=clustering_ratio_2,
+            clustering_num=clustering_num, clustering_ratio=clustering_ratio,
             img_name_list=img_name_list, size_mic=mic_size_train, batch_size=mic_batch_size)
         self.mic_vis_prepare = self._mic_vis_prepare(
             img_name_list=img_name_list, data_name_list=data_name_list, cam_label_dir=cam_label_dir,
@@ -849,7 +838,7 @@ class BASRunner(object):
             his_label_dir=his_label_dir, label_a=label_a, label_b=label_b, has_crf=has_crf)
 
         # Model
-        self.net = BASNet([clustering_num_1, clustering_num_2])
+        self.net = BASNet(clustering_num)
         self.net = nn.DataParallel(self.net).cuda()
         cudnn.benchmark = True
 
@@ -859,12 +848,11 @@ class BASRunner(object):
         pass
 
     @staticmethod
-    def _mic_train_prepare(clustering_num_1, clustering_num_2, clustering_ratio_1,
-                           clustering_ratio_2, img_name_list, size_mic=224, batch_size=8):
+    def _mic_train_prepare(clustering_num, clustering_ratio, img_name_list, size_mic=224, batch_size=8):
         result = {}
 
         dataset_cam = DatasetCAM(img_name_list=img_name_list, size_train=size_mic)
-        data_loader_cam = DataLoader(dataset_cam, batch_size, shuffle=True, num_workers=8)
+        data_loader_cam = DataLoader(dataset_cam, batch_size, shuffle=True, num_workers=16)
         data_num, data_batch_num = len(dataset_cam), len(data_loader_cam)
 
         result["dataset"] = dataset_cam
@@ -873,18 +861,12 @@ class BASRunner(object):
         result["data_batch_num"] = data_batch_num
 
         # MIC
-        produce_class11 = MICProduceClass(data_num, out_dim=clustering_num_1, ratio=clustering_ratio_1)
-        produce_class21 = MICProduceClass(data_num, out_dim=clustering_num_2, ratio=clustering_ratio_2)
-        produce_class12 = MICProduceClass(data_num, out_dim=clustering_num_1, ratio=clustering_ratio_1)
-        produce_class22 = MICProduceClass(data_num, out_dim=clustering_num_2, ratio=clustering_ratio_2)
+        produce_class11 = MICProduceClass(data_num, out_dim=clustering_num, ratio=clustering_ratio)
+        produce_class12 = MICProduceClass(data_num, out_dim=clustering_num, ratio=clustering_ratio)
         produce_class11.init()
-        produce_class21.init()
         produce_class12.init()
-        produce_class22.init()
         result["produce_class11"] = produce_class11
-        result["produce_class21"] = produce_class21
         result["produce_class12"] = produce_class12
-        result["produce_class22"] = produce_class22
 
         return result
 
@@ -943,8 +925,6 @@ class BASRunner(object):
     def train_mic(self, epoch_num=100, start_epoch=0, save_epoch_freq=5, lr=0.00001, model_file_name=None):
         produce_class11 = self.mic_train_prepare["produce_class11"]
         produce_class12 = self.mic_train_prepare["produce_class12"]
-        produce_class21 = self.mic_train_prepare["produce_class21"]
-        produce_class22 = self.mic_train_prepare["produce_class22"]
         data_loader = self.mic_train_prepare["data_loader"]
         data_batch_num = self.mic_train_prepare["data_batch_num"]
 
@@ -957,26 +937,18 @@ class BASRunner(object):
             self.net.eval()
             Tools.print("Update label {} .......".format(start_epoch))
             produce_class11.reset()
-            produce_class21.reset()
             with torch.no_grad():
                 for _idx, (inputs, indexes) in tqdm(enumerate(data_loader), total=data_batch_num):
                     inputs = inputs.type(torch.FloatTensor).cuda()
                     indexes = indexes.cuda()
-
                     result = self.net(inputs, has_mic=True, has_cam=False, has_sod=False)
-
-                    produce_class11.cal_label(result["mic"]["m1"]["smc_logits"], indexes)
-                    produce_class21.cal_label(result["mic"]["m2"]["smc_logits"], indexes)
+                    produce_class11.cal_label(result["mic"]["smc_logits"], indexes)
                     pass
                 pass
             classes = produce_class12.classes
             produce_class12.classes = produce_class11.classes
             produce_class11.classes = classes
-            classes = produce_class22.classes
-            produce_class22.classes = produce_class21.classes
-            produce_class21.classes = classes
             Tools.print("Update: [{}] 1-{}/{}".format(start_epoch, produce_class11.count, produce_class11.count_2))
-            Tools.print("Update: [{}] 2-{}/{}".format(start_epoch, produce_class21.count, produce_class21.count_2))
             pass
 
         optimizer = optim.Adam(self.net.parameters(), lr=lr, betas=(0.9, 0.999), weight_decay=0)
@@ -991,7 +963,6 @@ class BASRunner(object):
             self.net.train()
 
             produce_class11.reset()
-            produce_class21.reset()
             for i, (inputs, indexes) in tqdm(enumerate(data_loader), total=data_batch_num):
                 inputs = inputs.type(torch.FloatTensor).cuda()
                 indexes = indexes.cuda()
@@ -1001,14 +972,11 @@ class BASRunner(object):
 
                 ######################################################################################################
                 # MIC
-                produce_class11.cal_label(result["mic"]["m1"]["smc_logits"], indexes)
-                produce_class21.cal_label(result["mic"]["m2"]["smc_logits"], indexes)
-                mic_target_1 = result["mic"]["m1"]["smc_logits"]
-                mic_target_2 = result["mic"]["m2"]["smc_logits"]
-                mic_labels_1 = produce_class12.get_label(indexes).cuda()
-                mic_labels_2 = produce_class22.get_label(indexes).cuda()
+                produce_class11.cal_label(result["mic"]["smc_logits"], indexes)
+                mic_target = result["mic"]["smc_logits"]
+                mic_labels = produce_class12.get_label(indexes).cuda()
 
-                loss = self.mic_loss_fn(mic_target_1, mic_target_2, mic_labels_1, mic_labels_2)
+                loss = self.mic_loss_fn(mic_target, mic_labels)
                 ######################################################################################################
 
                 loss.backward()
@@ -1022,11 +990,7 @@ class BASRunner(object):
             classes = produce_class12.classes
             produce_class12.classes = produce_class11.classes
             produce_class11.classes = classes
-            classes = produce_class22.classes
-            produce_class22.classes = produce_class21.classes
-            produce_class21.classes = classes
             Tools.print("Train: [{}] 1-{}/{}".format(epoch, produce_class11.count, produce_class11.count_2))
-            Tools.print("Train: [{}] 2-{}/{}".format(epoch, produce_class21.count, produce_class21.count_2))
 
             ###########################################################################
             # 2 保存模型
@@ -1206,12 +1170,12 @@ class BASRunner(object):
 
                 ###########################################################################
                 # 3 评估模型
-                # self.eval_duts(self.net, epoch=epoch, is_test=True,
-                #                batch_size=data_loader.batch_size, size_test=size_sod_test)
+                self.eval_duts(self.net, epoch=epoch, is_test=True,
+                               batch_size=data_loader.batch_size, size_test=size_sod_test)
                 self.eval_by_image_label(self.net, img_name_list, lbl_name_list, epoch=epoch,
                                          size_test=size_sod_test, batch_size=data_loader.batch_size)
-                self.eval_duts(self.net, epoch=epoch, is_test=False,
-                               batch_size=data_loader.batch_size, size_test=size_sod_test)
+                # self.eval_duts(self.net, epoch=epoch, is_test=True,
+                #                batch_size=data_loader.batch_size, size_test=size_sod_test)
                 ###########################################################################
                 pass
             ###########################################################################
@@ -1237,6 +1201,7 @@ class BASRunner(object):
         img_name_list = glob.glob(os.path.join(data_dir, image_dir, '*.jpg'))
         lbl_name_list = [os.path.join(data_dir, label_dir, '{}.png'.format(
             os.path.splitext(os.path.basename(img_path))[0])) for img_path in img_name_list]
+        Tools.print("Test images: {}".format(len(lbl_name_list)))
 
         # EVAL
         cls.eval_by_image_label(net, img_name_list, lbl_name_list, epoch=epoch, size_test=size_test,
@@ -1348,11 +1313,8 @@ class BASRunner(object):
         Tools.print("train images: {}".format(len(img_name_list)))
         return cam_lbl_name_list, his_train_lbl_name_list, his_save_lbl_name_list
 
-    def mic_loss_fn(self, mic_1_out, mic_2_out, mic_labels_1, mic_labels_2):
-        loss_mic_1 = self.mic_loss(mic_1_out, mic_labels_1)
-        loss_mic_2 = self.mic_loss(mic_2_out, mic_labels_2)
-
-        loss_mic = loss_mic_1 + loss_mic_2
+    def mic_loss_fn(self, mic_out, mic_labels):
+        loss_mic = self.mic_loss(mic_out, mic_labels)
         return loss_mic
 
     def sod_loss_fn(self, sod_output, sod_label, has_f_loss, ignore_label=255.0):
@@ -1497,22 +1459,90 @@ Process finished with exit code 0
 """
 
 
+"""
+2020-08-15 22:50:57 Train avg mae=0.14293060756922538 score=0.7612911469517494
+E2E_R50_10_CAM_224_256_A1_256_320_320_cam_crf_H_CRF_0.3_0.5_111/sod_16.pth
+2020-08-16 02:30:59 Test 16 avg mae=0.08962148620436589 score=0.7685933875567427
+2020-08-16 02:34:18 Test 16 avg mae=0.054536611563093786 score=0.9062014117524748
+
+
+/home/ubuntu/anaconda3/envs/alisure36torch/bin/python /media/ubuntu/4T/ALISURE/USOD/BASNet/MyTrainTest_New_3_E2E3.py
+2020-08-16 09:43:44 train images: 10553
+2020-08-16 09:43:45 DatasetUSOD: size_train=320
+2020-08-16 09:43:45 Success Load Unsupervised pre train from ./pre_model/MoCov2.pth
+../BASNetTemp_E2E3/DUTS-TR/saved_models/E2E_R50_10_CAM_224_256_A1_256_320_320_cam_crf_H_CRF_0.3_0.5_111/sod_16.pth
+2020-08-16 09:44:39 Begin eval CSSD 320
+100%|██████████| 29/29 [00:27<00:00,  1.04it/s]
+2020-08-16 09:45:07 Test 0 avg mae=0.057852370600248205 score=0.9031653954407721
+2020-08-16 09:45:07 Begin eval ECSSD 320
+100%|██████████| 143/143 [00:33<00:00,  4.31it/s]
+2020-08-16 09:45:41 Test 0 avg mae=0.06928932563225915 score=0.8828413401172505
+2020-08-16 09:45:41 Begin eval ASD 320
+100%|██████████| 143/143 [00:22<00:00,  6.31it/s]
+2020-08-16 09:46:05 Test 0 avg mae=0.039987711007934766 score=0.92431186335668
+2020-08-16 09:46:05 Begin eval MSRA10K 320
+100%|██████████| 1429/1429 [03:45<00:00,  6.33it/s]
+2020-08-16 09:49:51 Test 0 avg mae=0.04690992082107455 score=0.9169410689455916
+2020-08-16 09:49:52 Begin eval MSRA-B 320
+100%|██████████| 715/715 [02:02<00:00,  5.84it/s]
+2020-08-16 09:52:00 Test 0 avg mae=0.05055346848065411 score=0.9007063795704169
+2020-08-16 09:52:00 Begin eval SED2 320
+93%|█████████▎| 14/15 [00:02<00:00,  6.42it/s]
+2020-08-16 09:52:03 Test 0 avg mae=0.09253517364462217 score=0.8254137736923006
+100%|██████████| 15/15 [00:02<00:00,  5.71it/s]
+2020-08-16 09:52:03 Begin eval DUT-OMRON 320
+100%|██████████| 738/738 [01:55<00:00,  6.39it/s]
+2020-08-16 09:54:01 Test 0 avg mae=0.09051706168931836 score=0.7869403829277833
+2020-08-16 09:54:01 Begin eval HKU-IS 320
+100%|██████████| 636/636 [01:40<00:00,  6.35it/s]
+2020-08-16 09:55:43 Test 0 avg mae=0.06378672802059343 score=0.8653938818330627
+2020-08-16 09:55:43 Begin eval SOD 320
+100%|██████████| 43/43 [00:07<00:00,  6.02it/s]
+2020-08-16 09:55:51 Test 0 avg mae=0.1471217947817126 score=0.7834924971540327
+2020-08-16 09:55:51 Begin eval THUR15000-Butterfly 320
+100%|██████████| 891/891 [02:31<00:00,  5.88it/s]
+2020-08-16 09:58:30 Test 0 avg mae=0.10153399431904492 score=0.7420539700359444
+2020-08-16 09:58:30 Begin eval PASCAL1500 320
+100%|██████████| 215/215 [00:35<00:00,  6.14it/s]
+2020-08-16 09:59:07 Test 0 avg mae=0.09048344187958296 score=0.8079889713614006
+2020-08-16 09:59:07 Begin eval PASCAL-S 320
+100%|██████████| 122/122 [00:19<00:00,  6.15it/s]
+2020-08-16 09:59:28 Test 0 avg mae=0.11797443198681366 score=0.794574397921672
+2020-08-16 09:59:28 Begin eval Judd 320
+100%|██████████| 129/129 [00:26<00:00,  3.13it/s]
+2020-08-16 09:59:55 Test 0 avg mae=0.16025334377159445 score=0.6015836843980746
+100%|██████████| 129/129 [00:26<00:00,  4.91it/s]
+2020-08-16 09:59:55 Begin eval DUTS-TE 320
+100%|██████████| 717/717 [01:55<00:00,  6.21it/s]
+2020-08-16 10:02:19 Test 0 avg mae=0.08966732796182858 score=0.7645120979410843
+2020-08-16 10:02:19 Begin eval DUTS-TR 320
+100%|██████████| 1508/1508 [03:56<00:00,  6.38it/s]
+2020-08-16 10:06:17 Test 0 avg mae=0.05453140121842648 score=0.9061582202405974
+2020-08-16 10:06:17 Begin eval CUB-200-2011 320
+100%|██████████| 1684/1684 [04:31<00:00,  6.19it/s]
+2020-08-16 10:11:32 Test 0 avg mae=0.053960402718481924 score=0.8424766254331478
+
+Process finished with exit code 0
+
+"""
+
+
 def train(mic_batch_size, sod_batch_size):
     # 数据
     sod_data = SODData(data_root_path="/media/ubuntu/4T/ALISURE/Data/SOD")
     img_name_list, lbl_name_list, data_name_list = sod_data.duts_tr()
     # img_name_list, lbl_name_list, data_name_list = sod_data.msra10k()
 
-    save_root_dir = "../BASNetTemp_E2E/{}".format(data_name_list[0])
+    save_root_dir = "../BASNetTemp_E2E3/{}".format(data_name_list[0])
 
     # 流程控制
-    is_train = True
-    has_train_mic = True
-    has_save_cam = True
+    is_train = False
+    has_train_mic = False
+    has_save_cam = False
     has_train_sod = True
     train_sod_is_supervised = False
     train_sod_has_history = True
-    mic_epoch_num = 300
+    mic_epoch_num = 500
     sod_epoch_num = 50
 
     # 参数
@@ -1521,8 +1551,8 @@ def train(mic_batch_size, sod_batch_size):
     multi_num, label_a, label_b, has_crf, has_f_loss = 1, 0.3, 0.5, True, False
 
     history_epoch_start, history_epoch_freq, save_sod_epoch_freq, save_mic_epoch_freq = 1, 1, 1, 10
-    cam_label_dir = "{}/cam/CAM_12_{}_{}_A{}".format(save_root_dir, mic_size_train, size_cam, multi_num)
-    cam_label_name = 'cam_c12_crf'
+    cam_label_dir = "{}/cam/CAM_{}_{}_A{}".format(save_root_dir, mic_size_train, size_cam, multi_num)
+    cam_label_name = 'cam_crf'
 
     name_model = "E2E_R50_10{}_{}_{}{}{}{}{}_{}_{}".format(
         "_FLoss" if has_f_loss else "", os.path.basename(cam_label_dir),
@@ -1535,11 +1565,11 @@ def train(mic_batch_size, sod_batch_size):
     model_dir = "{}/saved_models/{}".format(save_root_dir, name_model)
 
     bas_runner = BASRunner(
-        model_dir=model_dir, clustering_num_1=512, clustering_num_2=512, clustering_ratio_1=1, clustering_ratio_2=2,
-        img_name_list=img_name_list, lbl_name_list=lbl_name_list, cam_label_dir=cam_label_dir,
-        his_label_dir=his_label_dir, cam_label_name=cam_label_name, data_name_list=data_name_list,
-        has_f_loss=has_f_loss, has_crf=has_crf, mic_batch_size=mic_batch_size, sod_batch_size=sod_batch_size,
-        mic_size_train=mic_size_train, size_cam=size_cam, size_sod_train=size_sod_train, size_sod_test=size_sod_test,
+        model_dir=model_dir, clustering_num=512, clustering_ratio=2, img_name_list=img_name_list,
+        lbl_name_list=lbl_name_list, cam_label_dir=cam_label_dir, his_label_dir=his_label_dir,
+        cam_label_name=cam_label_name, data_name_list=data_name_list, has_f_loss=has_f_loss, has_crf=has_crf,
+        mic_batch_size=mic_batch_size, sod_batch_size=sod_batch_size, mic_size_train=mic_size_train, size_cam=size_cam,
+        size_sod_train=size_sod_train, size_sod_test=size_sod_test,
         multi_num=multi_num, label_a=label_a, label_b=label_b)
 
     if is_train:
@@ -1548,7 +1578,7 @@ def train(mic_batch_size, sod_batch_size):
             model_file_name = None
             # model_file_name = "../BASNetTemp_E2E/saved_models/R50_CAM_12_224_256_DFalse/mic_final_200.pth"
             bas_runner.train_mic(epoch_num=mic_epoch_num, start_epoch=0, model_file_name=model_file_name,
-                                 save_epoch_freq=save_mic_epoch_freq, lr=0.00001)
+                                 save_epoch_freq=save_mic_epoch_freq, lr=0.0001)
             pass
 
         # 保存CAM
@@ -1564,16 +1594,17 @@ def train(mic_batch_size, sod_batch_size):
 
         # 训练SOD
         if has_train_sod:
-            model_file_name = None
-            # model_file_name = "../BASNetTemp_E2E/saved_models/R50_CAM_12_224_256_DFalse/mic_final_200.pth"
+            # model_file_name = None
+            model_file_name = "../BASNetTemp_E2E3/DUTS-TR/saved_models/E2E_R50_10_CAM_224_256_A1_256_320_320_cam_crf_H_CRF_0.3_0.5_111/mic_final_300.pth"
             bas_runner.train_sod(epoch_num=sod_epoch_num, start_epoch=0, save_epoch_freq=save_sod_epoch_freq,
                                  is_supervised=train_sod_is_supervised, has_history=True,
                                  lr=0.0001, model_file_name=model_file_name,
                                  history_epoch_start=history_epoch_start, history_epoch_freq=history_epoch_freq)
             pass
     else:
-        model_name = "E2E_R50_55_CAM_12_224_256_A1_256_320_320_cam_c12_crf_H_CRF_0.3_0.5_111"
-        model_file_name = "../BASNetTemp_E2E/saved_models/{}/sod_41.pth".format(model_name)
+        save_dir = "../BASNetTemp_E2E3/DUTS-TR"
+        model_name = "E2E_R50_10_CAM_224_256_A1_256_320_320_cam_crf_H_CRF_0.3_0.5_111"
+        model_file_name = "{}/saved_models/{}/sod_16.pth".format(save_dir, model_name)
         Tools.print("Load model form {}".format(model_file_name))
         bas_runner.load_model(model_file_name)
 
@@ -1586,8 +1617,8 @@ def train(mic_batch_size, sod_batch_size):
             Tools.print("Begin eval {} {}".format(dataset_name_list[0], size_sod_test))
             bas_runner.eval_by_image_label(bas_runner.net, img_name_list, lbl_name_list,
                                            epoch=0, batch_size=sod_batch_size, size_test=size_sod_test,
-                                           save_path="../BASNetTemp_E2E/eval/{}/{}/{}/test".format(
-                                               size_sod_test, model_name, dataset_name_list[0]))
+                                           save_path="{}/eval/{}/{}/{}/test".format(
+                                               save_dir, size_sod_test, model_name, dataset_name_list[0]))
             pass
         pass
 
@@ -1596,11 +1627,11 @@ def train(mic_batch_size, sod_batch_size):
 
 if __name__ == '__main__':
     # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2"
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2"
     # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1"
-    # os.environ["CUDA_VISIBLE_DEVICES"] = "3"
-    _mic_batch_size = 16 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
-    _sod_batch_size = 8 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
+    os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+    _mic_batch_size = 48 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
+    _sod_batch_size = 7 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
 
     train(_mic_batch_size, _sod_batch_size)
     pass

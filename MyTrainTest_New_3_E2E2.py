@@ -255,6 +255,10 @@ class DatasetCAM(Dataset):
                                   ColorJitter(0.4, 0.4, 0.4, 0.4), RandomGrayscale(p=0.2),
                                   RandomHorizontalFlip(), ToTensor(),
                                   Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))])
+        # self.transform = Compose([FixedResized(size_train, size_train),
+        #                           ColorJitter(0.4, 0.4, 0.4, 0.4), RandomGrayscale(p=0.2),
+        #                           RandomHorizontalFlip(), ToTensor(),
+        #                           Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))])
         pass
 
     def __len__(self):
@@ -347,6 +351,11 @@ class DatasetEval(object):
         if self.size_eval is not None:
             label = label.resize((self.size_eval, self.size_eval))
             label2 = label2.resize((self.size_eval, self.size_eval))
+            pass
+        else:
+            if label.size[0] != label2.size[0] or label.size[1] != label2.size[1]:
+                label2 = label2.resize(label.size)
+                pass
             pass
 
         label = np.asarray(label) / 255
@@ -654,7 +663,7 @@ class BASNet(nn.Module):
 
         # -------------Encoder--------------
         backbone = resnet.__dict__["resnet50"](pretrained=is_supervised_pre_train,
-                                               replace_stride_with_dilation=[False, True, True])
+                                               replace_stride_with_dilation=[False, False, True])
         if is_unsupervised_pre_train:
             backbone = self.load_unsupervised_pre_train(backbone, unsupervised_pre_train_path)
         return_layers = {'relu': 'e0', 'layer1': 'e1', 'layer2': 'e2', 'layer3': 'e3', 'layer4': 'e4'}
@@ -668,8 +677,10 @@ class BASNet(nn.Module):
         self.convert_1 = ConvBlock(64, 128)
 
         # -------------MIC-------------
-        convert_dim = 512
-        self.convert_mic = ConvBlock(2048, convert_dim)
+        # convert_dim = 512
+        # self.convert_mic = ConvBlock(2048, convert_dim)
+        convert_dim = 2048
+
         self.mic_l2norm = MICNormalize(2)
         self.mic_pool = nn.MaxPool2d(2, 2, ceil_mode=True)
         self.mic_1_c1 = ConvBlock(convert_dim, convert_dim, has_relu=True)  # 28 32 40
@@ -711,7 +722,7 @@ class BASNet(nn.Module):
         # -------------MIC-------------
         if has_mic:
             e4 = feature["e4"]  # (2048, 40)
-            e4 = self.convert_mic(e4)  # (512, 40)
+            # e4 = self.convert_mic(e4)  # (512, 40)
 
             mic_1_feature = self.mic_1_c2(self.mic_1_c1(e4))  # (512, 40)
             mic_1_1x1 = F.adaptive_avg_pool2d(mic_1_feature, output_size=(1, 1)).view((mic_1_feature.size()[0], -1))
@@ -1521,8 +1532,8 @@ def train(mic_batch_size, sod_batch_size):
     multi_num, label_a, label_b, has_crf, has_f_loss = 1, 0.3, 0.5, True, False
 
     history_epoch_start, history_epoch_freq, save_sod_epoch_freq, save_mic_epoch_freq = 1, 1, 1, 10
-    cam_label_dir = "{}/cam/CAM_12_{}_{}_A{}".format(save_root_dir, mic_size_train, size_cam, multi_num)
-    cam_label_name = 'cam_c12_crf'
+    cam_label_dir = "{}/cam/CAM_{}_{}_A{}".format(save_root_dir, mic_size_train, size_cam, multi_num)
+    cam_label_name = 'cam_crf'
 
     name_model = "E2E_R50_10{}_{}_{}{}{}{}{}_{}_{}".format(
         "_FLoss" if has_f_loss else "", os.path.basename(cam_label_dir),
@@ -1548,7 +1559,7 @@ def train(mic_batch_size, sod_batch_size):
             model_file_name = None
             # model_file_name = "../BASNetTemp_E2E/saved_models/R50_CAM_12_224_256_DFalse/mic_final_200.pth"
             bas_runner.train_mic(epoch_num=mic_epoch_num, start_epoch=0, model_file_name=model_file_name,
-                                 save_epoch_freq=save_mic_epoch_freq, lr=0.00001)
+                                 save_epoch_freq=save_mic_epoch_freq, lr=0.0001)
             pass
 
         # 保存CAM
@@ -1595,8 +1606,8 @@ def train(mic_batch_size, sod_batch_size):
 
 
 if __name__ == '__main__':
-    # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2"
     # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1"
     # os.environ["CUDA_VISIBLE_DEVICES"] = "3"
     _mic_batch_size = 16 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
