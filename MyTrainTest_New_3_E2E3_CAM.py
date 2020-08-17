@@ -1466,7 +1466,7 @@ E2E_R50_10_CAM_224_256_A1_256_320_320_cam_crf_H_CRF_0.3_0.5_111/sod_16.pth
 2020-08-16 02:34:18 Test 16 avg mae=0.054536611563093786 score=0.9062014117524748
 
 
-/home/ubuntu/anaconda3/envs/alisure36torch/bin/python /media/ubuntu/4T/ALISURE/USOD/BASNet/MyTrainTest_New_3_E2E3.py
+/home/ubuntu/anaconda3/envs/alisure36torch/bin/python /media/ubuntu/4T/ALISURE/USOD/BASNet/MyTrainTest_New_3_E2E3_CAM.py
 2020-08-16 09:43:44 train images: 10553
 2020-08-16 09:43:45 DatasetUSOD: size_train=320
 2020-08-16 09:43:45 Success Load Unsupervised pre train from ./pre_model/MoCov2.pth
@@ -1530,6 +1530,17 @@ Process finished with exit code 0
 """
 2020-08-16 15:03:04 Test 31 avg mae=0.048352293784005775 score=0.8657299014654163
 2020-08-16 15:06:30 Test 31 avg mae=0.011440804680260961 score=0.9845271974918457
+"""
+
+
+"""
+# 1 layer 2048
+2020-08-17 14:05:59 Test 39 avg mae=0.07805507752556655 score=0.7639774242837039
+2020-08-17 14:10:31 Test 39 avg mae=0.05242350323753189 score=0.9048818407493644
+
+# 2 layer 2048
+2020-08-17 08:31:27 Test 14 avg mae=0.08978733233588651 score=0.7676288195634058
+2020-08-17 08:35:17 Test 14 avg mae=0.05519886129963106 score=0.9069349536931021
 """
 
 
