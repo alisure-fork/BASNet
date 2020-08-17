@@ -677,8 +677,10 @@ class BASNet(nn.Module):
         self.convert_1 = ConvBlock(64, 128)
 
         # -------------MIC-------------
-        self.mic_c1 = ConvBlock(2048, 2048, has_relu=True)  # 28 32 40
-        self.mic_l1 = nn.Linear(2048, self.clustering_num)
+        convert_dim = 2048
+        self.mic_c1 = ConvBlock(convert_dim, convert_dim, has_relu=True)  # 28 32 40
+        self.mic_c2 = ConvBlock(convert_dim, convert_dim, has_relu=True)
+        self.mic_l1 = nn.Linear(convert_dim, self.clustering_num)
         self.mic_l2norm = MICNormalize(2)
 
         # -------------Decoder-------------
@@ -713,7 +715,7 @@ class BASNet(nn.Module):
         if has_mic:
             e4 = feature["e4"]  # (2048, 10)
 
-            mic_feature = self.mic_c1(e4)  # (512, 10)
+            mic_feature = self.mic_c2(self.mic_c1(e4))  # (512, 10)
             mic_1x1 = F.adaptive_avg_pool2d(mic_feature, output_size=(1, 1)).view((mic_feature.size()[0], -1))
             smc_logits = self.mic_l1(mic_1x1)
             smc_l2norm = self.mic_l2norm(smc_logits)
@@ -1537,7 +1539,7 @@ def train(mic_batch_size, sod_batch_size):
     img_name_list, lbl_name_list, data_name_list = sod_data.duts_tr()
     # img_name_list, lbl_name_list, data_name_list = sod_data.msra10k()
 
-    save_root_dir = "../BASNetTemp_E2E3/{}3".format(data_name_list[0])
+    save_root_dir = "../BASNetTemp_E2E3/{}4".format(data_name_list[0])
 
     # 流程控制
     is_train = True
