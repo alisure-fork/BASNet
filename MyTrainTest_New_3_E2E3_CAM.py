@@ -1064,7 +1064,7 @@ class BASRunner(object):
         optimizer = optim.Adam(self.net.parameters(), lr=lr)
         for epoch in range(start_epoch, epoch_num+1):
             Tools.print()
-            self._adjust_learning_rate(optimizer, epoch, lr, start_epoch=30)
+            self._adjust_learning_rate(optimizer, epoch, lr, start_epoch=20)
             Tools.print('Epoch:{:03d}, lr={:.5f}'.format(epoch, optimizer.param_groups[0]['lr']))
 
             ###########################################################################
@@ -1499,6 +1499,48 @@ Process finished with exit code 0
 
 
 """
+/home/ubuntu/anaconda3/envs/alisure36torch/bin/python /media/ubuntu/4T/ALISURE/USOD/BASNet/MyTrainTest_New_3_E2E3_CAM.py
+2020-08-18 15:02:49 train images: 10553
+2020-08-18 15:02:51 DatasetUSOD: size_train=320
+2020-08-18 15:02:51 Success Load Unsupervised pre train from ./pre_model/MoCov2.pth
+BASNetTemp_E2E3/DUTS-TR4/saved_models/E2E_R50_20_CAM_224_256_A1_256_320_320_cam_crf_H_CRF_0.3_0.5_111/sod_16.pth
+BASNetTemp_E2E3/DUTS-TR4/saved_models/E2E_R50_20_CAM_224_256_A1_256_320_320_cam_crf_H_CRF_0.3_0.5_111/sod_16.pth
+2020-08-18 15:03:42 Begin eval CSSD 320
+2020-08-18 15:04:11 Test 0 avg mae=0.05860092394567769 score=0.9001489941154126
+2020-08-18 15:04:11 Begin eval ECSSD 320
+2020-08-18 15:04:47 Test 0 avg mae=0.06994894858111035 score=0.8798300543274915
+2020-08-18 15:04:47 Begin eval ASD 320
+2020-08-18 15:05:12 Test 0 avg mae=0.041339804633305624 score=0.9211786815396533
+2020-08-18 15:05:12 Begin eval MSRA10K 320
+2020-08-18 15:09:06 Test 0 avg mae=0.04871516610496398 score=0.9125262324952033
+2020-08-18 15:09:07 Begin eval MSRA-B 320
+2020-08-18 15:11:15 Test 0 avg mae=0.05109024474696888 score=0.8969676261176733
+2020-08-18 15:11:15 Begin eval SED2 320
+2020-08-18 15:11:17 Test 0 avg mae=0.09027583425243696 score=0.8394629374617827
+2020-08-18 15:11:18 Begin eval DUT-OMRON 320
+2020-08-18 15:13:17 Test 0 avg mae=0.08654620717998927 score=0.7936962801422115
+2020-08-18 15:13:17 Begin eval HKU-IS 320
+2020-08-18 15:14:58 Test 0 avg mae=0.061416558675327394 score=0.8644735699553595
+2020-08-18 15:14:58 Begin eval SOD 320
+2020-08-18 15:15:05 Test 0 avg mae=0.14265770456472107 score=0.798010744184421
+2020-08-18 15:15:05 Begin eval THUR15000-Butterfly 320
+2020-08-18 15:17:45 Test 0 avg mae=0.0965072974964023 score=0.7517810617849944
+2020-08-18 15:17:46 Begin eval PASCAL1500 320
+2020-08-18 15:18:24 Test 0 avg mae=0.08715616092085839 score=0.8087668302021984
+2020-08-18 15:18:24 Begin eval PASCAL-S 320
+2020-08-18 15:18:45 Test 0 avg mae=0.11546403244443115 score=0.790753910971967
+2020-08-18 15:18:45 Begin eval Judd 320
+2020-08-18 15:19:14 Test 0 avg mae=0.15322441258287245 score=0.6102623018341078
+2020-08-18 15:19:14 Begin eval DUTS-TE 320
+2020-08-18 15:21:42 Test 0 avg mae=0.08555891071517681 score=0.7694584301556939
+2020-08-18 15:21:42 Begin eval DUTS-TR 320
+2020-08-18 15:25:49 Test 0 avg mae=0.05398646735991364 score=0.9071103678975326
+2020-08-18 15:25:49 Begin eval CUB-200-2011 320
+2020-08-18 15:30:31 Test 0 avg mae=0.05361194836778783 score=0.8381788415259347
+"""
+
+
+"""
 # 1 layer 2048
 2020-08-17 14:05:59 Test 39 avg mae=0.07805507752556655 score=0.7639774242837039
 2020-08-17 14:10:31 Test 39 avg mae=0.05242350323753189 score=0.9048818407493644
@@ -1518,28 +1560,22 @@ def train(mic_batch_size, sod_batch_size):
     img_name_list, lbl_name_list, data_name_list = sod_data.duts_tr()
     # img_name_list, lbl_name_list, data_name_list = sod_data.msra10k()
 
-    save_root_dir = "../BASNetTemp_E2E3/{}4".format(data_name_list[0])
-
     # 流程控制
     is_train = True
-    has_train_mic = False
-    has_save_cam = False
+    has_train_mic = True
+    has_save_cam = True
     has_train_sod = True
-    train_sod_is_supervised = False
     train_sod_has_history = True
-    mic_epoch_num = 300
-    sod_epoch_num = 50
-
-    # 参数
-    # mic_size_train, size_cam, size_sod_train, size_sod_test = 224, 256, 240, 256
+    train_sod_is_supervised = False
+    mic_epoch_num, sod_epoch_num = 200, 30
     mic_size_train, size_cam, size_sod_train, size_sod_test = 224, 256, 320, 320
     multi_num, label_a, label_b, has_crf, has_f_loss = 1, 0.3, 0.5, True, False
-
     history_epoch_start, history_epoch_freq, save_sod_epoch_freq, save_mic_epoch_freq = 1, 1, 1, 10
-    cam_label_dir = "{}/cam/CAM_{}_{}_A{}".format(save_root_dir, mic_size_train, size_cam, multi_num)
     cam_label_name = 'cam_crf'
 
-    name_model = "E2E_R50_10{}_{}_{}{}{}{}{}_{}_{}".format(
+    save_root_dir = "../BASNetTemp_E2E3/{}5".format(data_name_list[0])
+    cam_label_dir = "{}/cam/CAM_{}_{}_A{}".format(save_root_dir, mic_size_train, size_cam, multi_num)
+    name_model = "E2E_R50_{}_{}_{}{}{}{}{}_{}_{}".format(
         "_FLoss" if has_f_loss else "", os.path.basename(cam_label_dir),
         "{}_{}_{}".format(size_cam, size_sod_train, size_sod_test), "_{}".format(cam_label_name),
         "_S" if train_sod_is_supervised else "", "_H" if train_sod_has_history else "",
@@ -1561,7 +1597,7 @@ def train(mic_batch_size, sod_batch_size):
         # 训练MIC
         if has_train_mic:
             model_file_name = None
-            # model_file_name = "../BASNetTemp_E2E/saved_models/R50_CAM_12_224_256_DFalse/mic_final_200.pth"
+            # model_file_name = "{}/mic_final_{}.pth".format(model_dir, mic_epoch_num)
             bas_runner.train_mic(epoch_num=mic_epoch_num, start_epoch=0, model_file_name=model_file_name,
                                  save_epoch_freq=save_mic_epoch_freq, lr=0.0001)
             pass
@@ -1569,7 +1605,7 @@ def train(mic_batch_size, sod_batch_size):
         # 保存CAM
         if has_save_cam:
             model_file_name = None
-            # model_file_name = "../BASNetTemp_E2E/saved_models/R50_CAM_12_224_256_DFalse/mic_final_200.pth"
+            # model_file_name = "{}/mic_final_{}.pth".format(model_dir, mic_epoch_num)
             bas_runner.vis_cam(model_file_name=model_file_name)
 
             # 计算指标
@@ -1580,16 +1616,14 @@ def train(mic_batch_size, sod_batch_size):
         # 训练SOD
         if has_train_sod:
             # model_file_name = None
-            model_file_name = "../BASNetTemp_E2E3/DUTS-TR4/saved_models/E2E_R50_10_CAM_224_256_A1_256_320_320_cam_crf_H_CRF_0.3_0.5_111/mic_final_300.pth"
+            model_file_name = "{}/mic_final_{}.pth".format(model_dir, mic_epoch_num)
             bas_runner.train_sod(epoch_num=sod_epoch_num, start_epoch=0, save_epoch_freq=save_sod_epoch_freq,
                                  is_supervised=train_sod_is_supervised, has_history=True,
                                  lr=0.0001, model_file_name=model_file_name,
                                  history_epoch_start=history_epoch_start, history_epoch_freq=history_epoch_freq)
             pass
     else:
-        save_dir = "../BASNetTemp_E2E3/DUTS-TR4"
-        model_name = "E2E_R50_20_CAM_224_256_A1_256_320_320_cam_crf_H_CRF_0.3_0.5_111"
-        model_file_name = "{}/saved_models/{}/sod_16.pth".format(save_dir, model_name)
+        model_file_name = "{}/sod_15.pth".format(model_dir, name_model)
         Tools.print("Load model form {}".format(model_file_name))
         bas_runner.load_model(model_file_name)
 
@@ -1603,7 +1637,7 @@ def train(mic_batch_size, sod_batch_size):
             bas_runner.eval_by_image_label(bas_runner.net, img_name_list, lbl_name_list,
                                            epoch=0, batch_size=sod_batch_size, size_test=size_sod_test,
                                            save_path="{}/eval/{}/{}/{}/test".format(
-                                               save_dir, size_sod_test, model_name, dataset_name_list[0]))
+                                               save_root_dir, size_sod_test, name_model, dataset_name_list[0]))
             pass
         pass
 
@@ -1612,9 +1646,10 @@ def train(mic_batch_size, sod_batch_size):
 
 if __name__ == '__main__':
     # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2"
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2"
     # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1"
-    # os.environ["CUDA_VISIBLE_DEVICES"] = "2, 3"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "2, 3"
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "2"
     # os.environ["CUDA_VISIBLE_DEVICES"] = "3"
     _mic_batch_size = 64 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
     _sod_batch_size = 7 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
