@@ -1551,6 +1551,15 @@ BASNetTemp_E2E3/DUTS-TR4/saved_models/E2E_R50_20_CAM_224_256_A1_256_320_320_cam_
 # 2 layer 2048
 2020-08-18 12:08:56 Test 16 avg mae=0.08554037076731523 score=0.7738992853604578
 2020-08-18 12:12:21 Test 16 avg mae=0.05399495498116674 score=0.9075182823458877
+
+Train avg mae=0.15311216202787353 score=0.7597398710023001
+2020-08-18 21:20:28 Test 9 avg mae=0.09850212213554754 score=0.7651415480849311
+2020-08-18 21:25:11 Test 9 avg mae=0.059653836597666265 score=0.9049485771055307
+
+msra10k
+2020-08-18 18:35:16 Train avg mae=0.19907852035502874 score=0.7570708716775661
+2020-08-18 21:51:31 Test 12 avg mae=0.13552859812601364 score=0.659222417661623
+2020-08-18 21:55:12 Test 12 avg mae=0.05611393935717903 score=0.8932012595385137
 """
 
 
@@ -1645,10 +1654,10 @@ def train(mic_batch_size, sod_batch_size):
 
 
 if __name__ == '__main__':
-    # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
     # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2"
     # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1"
-    os.environ["CUDA_VISIBLE_DEVICES"] = "2, 3"
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "2, 3"
     # os.environ["CUDA_VISIBLE_DEVICES"] = "2"
     # os.environ["CUDA_VISIBLE_DEVICES"] = "3"
     _mic_batch_size = 64 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
