@@ -442,20 +442,8 @@ class DatasetUSOD(Dataset):
                 img = np.asarray(Image.open(img_name).convert("RGB"))  # 图像
                 ann = np.asarray(Image.open(save_lbl_name).convert("L")) / 255  # 训练的输出
                 if self.has_crf:
-                    # 1
                     ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
                     ann = (0.75 * ann + 0.25 * ann_label)
-
-                    # 2
-                    # if epoch <= 10:
-                    #     ann_label = CRFTool.crf(img, np.expand_dims(ann, axis=0))
-                    #     ann = (0.75 * ann + 0.25 * ann_label)
-                    # else:
-                    #     ann, change = CRFTool.get_uncertain_area(ann, black_th=self.label_a,
-                    #                                              white_th=self.label_b, ratio_th=16)
-                    #     ann2 = CRFTool.crf_label(img, np.expand_dims(ann, axis=0), a=self.label_a, b=self.label_b)
-                    #     ann[change] = ann2[change]
-                    #     pass
                     pass
 
                 imsave(Tools.new_dir(train_lbl_name), np.asarray(ann * 255, dtype=np.uint8), check_contrast=False)
@@ -1338,19 +1326,37 @@ class BASRunner(object):
 
 
 """
-../BASNetTemp_E2E3/DUTS-TR_MIC/saved_models/E2E_R50_3_CAM_224_256_A1_256_320_320_cam_crf_H_CRF_0.3_0.5_111/mic_final_300.pth
-2020-08-21 12:47:09 Train avg mae=0.22066752645167695 score=0.8101893839502283
+../BASNetTemp_E2E3/DUTS-TR_MoCo/saved_models/E2E_R50_3_CAM_224_256_A1_256_320_320_cam_crf_H_CRF_0.3_0.8_111/mic_final_300.pth
+2020-08-22 02:27:34 Train avg mae=0.17532201723786991 score=0.8170235166418844
+../BASNetTemp_E2E3/DUTS-TR_MoCo/saved_models/E2E_R50_3_CAM_224_256_A1_256_320_320_cam_crf_H_CRF_0.3_0.8_111/sod_12.pth
+2020-08-22 04:46:35 Test 12 avg mae=0.08861039036677944 score=0.7308335690343888
+2020-08-22 04:50:02 Test 12 avg mae=0.07084763751659216 score=0.9003209308006033
 
-../BASNetTemp_E2E3/DUTS-TR_MIC/saved_models/E2E_R50_3_CAM_224_256_A1_256_320_320_cam_crf_H_CRF_0.3_0.9_111/sod_8.pth
-2020-08-21 15:26:57 Test 8 avg mae=0.08801342813918987 score=0.7294184566464746
-2020-08-21 15:30:21 Test 8 avg mae=0.07338359269661834 score=0.8931404271186466
 
-../BASNetTemp_E2E3/DUTS-TR_MIC/saved_models/E2E_R50_3_CAM_224_256_A1_256_320_320_cam_crf_H_CRF_0.3_0.8_111/sod_17.pth
-2020-08-21 20:16:20 Test 17 avg mae=0.08400077732900778 score=0.7418285562591014
-2020-08-21 20:19:37 Test 17 avg mae=0.06165886929243882 score=0.904817333671754
-../BASNetTemp_E2E3/DUTS-TR_MIC/saved_models/E2E_R50_1_CAM_224_256_A1_256_320_320_cam_crf_H_CRF_0.3_0.8_111/sod_18.pth
-2020-08-24 15:03:09 Test 18 avg mae=0.08202180881053209 score=0.7491391157539442
-2020-08-24 15:06:30 Test 18 avg mae=0.06349255933132349 score=0.9038443487977771
+../BASNetTemp_E2E3/DUTS-TR_MoCo/saved_models/E2E_R50_3_CAM_224_256_A1_256_320_320_cam_crf_H_CRF_0.3_0.5_111/mic_final_300.pth
+2020-08-22 23:54:44 Train avg mae=0.14660233059060448 score=0.7690679633393881
+
+../BASNetTemp_E2E3/DUTS-TR_MoCo/saved_models/E2E_R50_3_CAM_224_256_A1_256_320_320_cam_crf_H_CRF_0.3_0.7_111/sod_17.pth
+2020-08-23 20:04:33 Test 17 avg mae=0.08091253249181642 score=0.753246135532568
+2020-08-23 20:07:52 Test 17 avg mae=0.05640516117887092 score=0.9142121914353228
+../BASNetTemp_E2E3/DUTS-TR_MoCo/saved_models/E2E_R50_3_CAM_224_256_A1_256_320_320_cam_crf_H_CRF_0.3_0.6_111/sod_12.pth
+2020-08-23 13:01:59 Test 12 avg mae=0.07694090817951493 score=0.7733870684860311
+2020-08-23 13:05:33 Test 12 avg mae=0.050845898460567154 score=0.9150119664175508
+../BASNetTemp_E2E3/DUTS-TR_MoCo/saved_models/E2E_R50_3_CAM_224_256_A1_256_320_320_cam_crf_H_CRF_0.3_0.6_111/sod_27.pth
+2020-08-23 15:54:07 Test 27 avg mae=0.07218409308956729 score=0.7841198270519402
+2020-08-23 15:57:47 Test 27 avg mae=0.046411338220263984 score=0.9143995907565583
+../BASNetTemp_E2E3/DUTS-TR_MoCo/saved_models/E2E_R50_4_CAM_224_256_A1_256_320_320_cam_crf_H_CRF_0.3_0.6_111/sod_21.pth
+2020-08-25 13:51:42 Test 21 avg mae=0.07640894076062574 score=0.7781088806097959
+2020-08-25 13:55:01 Test 21 avg mae=0.04887392204403087 score=0.9150565305410301
+../BASNetTemp_E2E3/DUTS-TR_MoCo/saved_models/E2E_R50_3_CAM_224_256_A1_256_320_320_cam_crf_H_CRF_0.3_0.55_111/sod_13.pth
+2020-08-24 00:14:32 Test 13 avg mae=0.08502591881487105 score=0.7714211683488859
+2020-08-24 00:17:55 Test 13 avg mae=0.051144284910129616 score=0.9133887388152867
+../BASNetTemp_E2E3/DUTS-TR_MoCo/saved_models/E2E_R50_3_CAM_224_256_A1_256_320_320_cam_crf_H_CRF_0.3_0.5_111/sod_11.pth
+2020-08-23 02:12:55 Test 11 avg mae=0.09602787829935551 score=0.7583360413598756
+2020-08-23 02:16:16 Test 11 avg mae=0.05838984694203426 score=0.9042483152171035
+../BASNetTemp_E2E3/DUTS-TR_MoCo/saved_models/E2E_R50_3_CAM_224_256_A1_256_320_320_cam_crf_H_CRF_0.4_0.6_111/sod_17.pth
+2020-08-25 01:57:11 Test 17 avg mae=0.08579168561846018 score=0.7528053646136561
+2020-08-25 02:00:27 Test 17 avg mae=0.0635770444390154 score=0.9135862158224191
 """
 
 
@@ -1362,21 +1368,21 @@ def train(mic_batch_size, sod_batch_size):
 
     # 流程控制
     is_train = True
-    has_train_mic = False
-    has_save_cam = False
+    has_train_mic = True
+    has_save_cam = True
     has_train_sod = True
     train_sod_has_history = True
     train_sod_is_supervised = False
-    is_unsupervised_pre_train = False
-    mic_epoch_num, sod_epoch_num = 300, 30
+    is_unsupervised_pre_train = True
+    mic_epoch_num, sod_epoch_num = 500, 30
     mic_size_train, size_cam, size_sod_train, size_sod_test = 224, 256, 320, 320
-    multi_num, label_a, label_b, has_crf, has_f_loss = 1, 0.3, 0.8, True, False
+    multi_num, label_a, label_b, has_crf, has_f_loss = 1, 0.3, 0.6, True, False
     history_epoch_start, history_epoch_freq, save_sod_epoch_freq, save_mic_epoch_freq = 1, 1, 1, 10
     cam_label_name = 'cam_crf'
 
-    save_root_dir = "../BASNetTemp_E2E3/{}_MIC".format(data_name_list[0])
+    save_root_dir = "../BASNetTemp_E2E3/{}_MoCo_2".format(data_name_list[0])
     cam_label_dir = "{}/cam/CAM_{}_{}_A{}".format(save_root_dir, mic_size_train, size_cam, multi_num)
-    name_model = "E2E_R50_1{}_{}_{}{}{}{}{}_{}_{}".format(
+    name_model = "E2E_R50_2{}_{}_{}{}{}{}{}_{}_{}".format(
         "_FLoss" if has_f_loss else "", os.path.basename(cam_label_dir),
         "{}_{}_{}".format(size_cam, size_sod_train, size_sod_test), "_{}".format(cam_label_name),
         "_S" if train_sod_is_supervised else "", "_H" if train_sod_has_history else "",
@@ -1387,7 +1393,7 @@ def train(mic_batch_size, sod_batch_size):
     model_dir = "{}/saved_models/{}".format(save_root_dir, name_model)
 
     bas_runner = BASRunner(
-        model_dir=model_dir, clustering_num=512, clustering_ratio=2, img_name_list=img_name_list,
+        model_dir=model_dir, clustering_num=256, clustering_ratio=2, img_name_list=img_name_list,
         lbl_name_list=lbl_name_list, cam_label_dir=cam_label_dir, his_label_dir=his_label_dir,
         cam_label_name=cam_label_name, data_name_list=data_name_list, has_f_loss=has_f_loss, has_crf=has_crf,
         mic_batch_size=mic_batch_size, sod_batch_size=sod_batch_size, mic_size_train=mic_size_train, size_cam=size_cam,
@@ -1400,7 +1406,7 @@ def train(mic_batch_size, sod_batch_size):
             model_file_name = None
             # model_file_name = "{}/mic_final_{}.pth".format(model_dir, mic_epoch_num)
             bas_runner.train_mic(epoch_num=mic_epoch_num, start_epoch=0, model_file_name=model_file_name,
-                                 save_epoch_freq=save_mic_epoch_freq, lr=0.00001)
+                                 save_epoch_freq=save_mic_epoch_freq, lr=0.0001)
             pass
 
         # 保存CAM
@@ -1416,11 +1422,11 @@ def train(mic_batch_size, sod_batch_size):
 
         # 训练SOD
         if has_train_sod:
-            # model_file_name = None
+            model_file_name = None
             # _model_dir = model_dir
-            _model_dir = "E2E_R50_3_CAM_224_256_A1_256_320_320_cam_crf_H_CRF_0.3_0.5_111"
-            _model_dir = "../BASNetTemp_E2E3/DUTS-TR_MIC/saved_models/{}".format(_model_dir)
-            model_file_name = "{}/mic_final_{}.pth".format(_model_dir, mic_epoch_num)
+            # _model_dir = "E2E_R50_3_CAM_224_256_A1_256_320_320_cam_crf_H_CRF_0.3_0.5_111"
+            # _model_dir = "../BASNetTemp_E2E3/DUTS-TR_MoCo/saved_models/{}".format(_model_dir)
+            # model_file_name = "{}/mic_final_{}.pth".format(_model_dir, mic_epoch_num)
             bas_runner.train_sod(epoch_num=sod_epoch_num, start_epoch=0, save_epoch_freq=save_sod_epoch_freq,
                                  is_supervised=train_sod_is_supervised, has_history=True,
                                  lr=0.0001, model_file_name=model_file_name,
@@ -1449,10 +1455,10 @@ def train(mic_batch_size, sod_batch_size):
 
 
 if __name__ == '__main__':
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
     # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2"
     # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1"
-    # os.environ["CUDA_VISIBLE_DEVICES"] = "2, 3"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "2, 3"
     # os.environ["CUDA_VISIBLE_DEVICES"] = "2"
     # os.environ["CUDA_VISIBLE_DEVICES"] = "3"
     _mic_batch_size = 64 * len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
